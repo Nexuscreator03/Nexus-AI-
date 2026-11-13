@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "UserAccountProfile": {
+      "title": "UserAccountProfile",
+      "description": "Private user memory, identity, learned likes/dislikes, and comfort preferences tied to the signed-in email account.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "humorPreference": {
+          "type": "boolean"
+        },
+        "technicalDepth": {
+          "type": "string",
+          "enum": ["high", "balanced", "simple"],
+          "maxLength": 20
+        },
+        "autonomyDecisiveness": {
+          "type": "boolean"
+        },
+        "userVibe": {
+          "type": "string",
+          "enum": ["humorous", "technical", "direct", "balanced"],
+          "maxLength": 20
+        },
+        "likedTopics": {
+          "type": "array",
+          "description": "Topics and styles the user enjoys"
+        },
+        "dislikedTopics": {
+          "type": "array",
+          "description": "Topics and styles the AI should avoid for user comfort"
+        },
+        "notes": {
+          "type": "array",
+          "description": "Memorized facts and personal context about the user"
+        },
+        "totalLikes": {
+          "type": "number"
+        },
+        "totalDislikes": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "humorPreference",
+        "technicalDepth",
+        "autonomyDecisiveness",
+        "likedTopics",
+        "dislikedTopics",
+        "userVibe",
+        "totalLikes",
+        "totalDislikes",
+        "notes",
+        "updatedAt"
+      ]
+    },
+    "UserConversation": {
+      "title": "UserConversation",
+      "description": "Synced conversation history for cross-conversation memory linked to the signed-in account.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "messages": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "number"
+        },
+        "isFavorite": {
+          "type": "boolean"
+        },
+        "isArchived": {
+          "type": "boolean"
+        },
+        "projectId": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": ["id", "ownerUid", "title", "messages", "createdAt", "updatedAt"]
+    },
+    "UserProject": {
+      "title": "UserProject",
+      "description": "Project folders created by the signed-in user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "ownerUid", "name", "color", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/private/profile": {
+      "schema": { "$ref": "#/entities/UserAccountProfile" },
+      "description": "Private memorized user profile, email, likes, dislikes, and notes."
+    },
+    "/users/{userId}/conversations/{convId}": {
+      "schema": { "$ref": "#/entities/UserConversation" },
+      "description": "Conversations belonging to the authenticated user for cross-session memory."
+    },
+    "/users/{userId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/UserProject" },
+      "description": "Project folders belonging to the authenticated user."
+    }
+  }
+}
