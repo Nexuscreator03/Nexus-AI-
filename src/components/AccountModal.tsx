@@ -130,6 +130,29 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         {/* Auth Section */}
         {!authUser ? (
           <div className="p-4 rounded-xl bg-black/35 border border-white/10 text-center space-y-3">
+            {userProfile.email && (
+              <div className="p-2.5 rounded-xl bg-cyan-950/35 border border-cyan-500/35 flex items-center justify-between gap-2 text-left">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-mono text-cyan-300 font-semibold truncate">
+                    E-mail salvo: {userProfile.email}
+                  </p>
+                  <p className="text-[10px] font-mono text-slate-400">
+                    Acesso direto ativado apenas no chat
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    cyberAudio.playClick();
+                    onUpdateProfile((prev) => ({ ...prev, email: undefined }));
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-rose-500/35 bg-rose-950/40 hover:bg-rose-900/50 text-rose-200 text-[11px] font-mono shrink-0 transition-colors"
+                >
+                  Remover
+                </button>
+              </div>
+            )}
+
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
               Entre com seu <strong className="text-white">e-mail Google</strong> para o NEXUS
               memorizar quem você é, salvar o que você gosta ou não gosta e manter suas conversas

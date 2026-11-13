@@ -192,7 +192,12 @@ export default function App() {
   const [locationError, setLocationError] = useState<string | null>(null);
 
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const hasRegisteredEmail = Boolean(authUser?.email || (userProfile.email && userProfile.email.trim()));
   const [viewMode, setViewMode] = useState<'site' | 'chat'>(() => {
+    const savedProfile = safeParseProfile(safeGetItem(PROFILE_KEY));
+    if (savedProfile.email && savedProfile.email.trim()) {
+      return 'chat';
+    }
     if (typeof window !== 'undefined' && window.location.pathname.startsWith('/chat')) {
       return 'chat';
     }
@@ -227,8 +232,17 @@ export default function App() {
   const syncViewportRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    if (hasRegisteredEmail && viewMode !== 'chat') {
+      setViewMode('chat');
+      if (typeof window !== 'undefined' && window.location.pathname !== '/chat') {
+        window.history.replaceState({}, '', '/chat');
+      }
+    }
+  }, [hasRegisteredEmail, viewMode]);
+
+  useEffect(() => {
     const handlePopState = () => {
-      if (window.location.pathname.startsWith('/chat')) {
+      if (hasRegisteredEmail || window.location.pathname.startsWith('/chat')) {
         setViewMode('chat');
       } else {
         setViewMode('site');
@@ -236,7 +250,7 @@ export default function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [hasRegisteredEmail]);
 
   // Dynamically bind app height & top to window.visualViewport so mobile virtual keyboard never clips Navbar
   useEffect(() => {
@@ -1181,11 +1195,33 @@ export default function App() {
     height: viewportBox.height ? `${viewportBox.height}px` : '100dvh',
   };
 
-  if (viewMode === 'site') {
+  const handleSaveEmailFromSite = (email: string) => {
+    setUserProfile((prev) => ({ ...prev, email }));
+    navigateToView('chat');
+  };
+
+  const handleSignInFromSite = async () => {
+    setIsAuthLoading(true);
+    setAuthError(null);
+    try {
+      await signInWithEmailAccount();
+      navigateToView('chat');
+    } catch (err: any) {
+      setAuthError(err?.message || 'Não foi possível entrar com sua conta Google.');
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  if (viewMode === 'site' && !hasRegisteredEmail) {
     return (
       <NexusSite
         theme={theme}
         onEnterChat={handleEnterChatFromSite}
+        onSaveEmail={handleSaveEmailFromSite}
+        onSignInWithGoogle={handleSignInFromSite}
+        isAuthLoading={isAuthLoading}
+        authError={authError}
         viewportStyle={viewportStyle}
       />
     );
@@ -1276,7 +1312,7 @@ export default function App() {
           onToggleSearch={() => setUseSearch(!useSearch)}
           theme={theme}
           onThemeChange={setTheme}
-          onOpenSite={() => navigateToView('site')}
+          onOpenSite={hasRegisteredEmail ? undefined : () => navigateToView('site')}
         />
 
         <div className="relative flex-1 min-h-0 flex flex-col min-w-0 overflow-clip">
