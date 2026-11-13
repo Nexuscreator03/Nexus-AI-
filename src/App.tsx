@@ -210,6 +210,82 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // Keep layout height & top locked to visualViewport when mobile virtual keyboard opens/closes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const root = document.documentElement;
+    let rafId: number | null = null;
+    let lastHeight = window.visualViewport ? Math.round(window.visualViewport.height) : window.innerHeight;
+    const timers: number[] = [];
+
+    const syncViewportMetrics = () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      rafId = window.requestAnimationFrame(() => {
+        const vv = window.visualViewport;
+        const height = vv ? Math.round(vv.height) : window.innerHeight;
+        const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+
+        root.style.setProperty('--nexus-viewport-height', `${height}px`);
+        root.style.setProperty('--nexus-viewport-top', `${offsetTop}px`);
+
+        if (window.scrollY !== 0 || window.scrollX !== 0) {
+          window.scrollTo(0, 0);
+        }
+        if (document.documentElement.scrollTop !== 0) {
+          document.documentElement.scrollTop = 0;
+        }
+        if (document.body.scrollTop !== 0) {
+          document.body.scrollTop = 0;
+        }
+
+        // If keyboard opened (height shrank significantly) and user was near bottom, keep latest message visible
+        if (height < lastHeight - 80) {
+          const scroller = scrollContainerRef.current;
+          if (scroller) {
+            const dist = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+            if (dist < 220) {
+              messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+            }
+          }
+        }
+        lastHeight = height;
+      });
+    };
+
+    const scheduleDelayedSync = () => {
+      syncViewportMetrics();
+      [100, 280, 480].forEach((delay) => {
+        const id = window.setTimeout(syncViewportMetrics, delay);
+        timers.push(id);
+      });
+    };
+
+    syncViewportMetrics();
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', syncViewportMetrics);
+      vv.addEventListener('scroll', syncViewportMetrics);
+    }
+    window.addEventListener('resize', syncViewportMetrics);
+    window.addEventListener('orientationchange', scheduleDelayedSync);
+    window.addEventListener('focusin', scheduleDelayedSync);
+    window.addEventListener('focusout', scheduleDelayedSync);
+
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      timers.forEach((id) => window.clearTimeout(id));
+      if (vv) {
+        vv.removeEventListener('resize', syncViewportMetrics);
+        vv.removeEventListener('scroll', syncViewportMetrics);
+      }
+      window.removeEventListener('resize', syncViewportMetrics);
+      window.removeEventListener('orientationchange', scheduleDelayedSync);
+      window.removeEventListener('focusin', scheduleDelayedSync);
+      window.removeEventListener('focusout', scheduleDelayedSync);
+    };
+  }, []);
+
   const navigateToView = (nextView: 'site' | 'chat') => {
     setViewMode(nextView);
     if (typeof window !== 'undefined') {
@@ -939,7 +1015,7 @@ export default function App() {
 
   return (
     <div
-      className={`relative flex h-dvh min-h-0 w-full max-w-full overflow-hidden text-slate-100 select-text ${
+      className={`relative flex h-full min-h-0 w-full max-w-full overflow-hidden text-slate-100 select-text ${
         theme === 'simple'
           ? 'theme-simple'
           : theme === 'nebula'
@@ -1022,7 +1098,7 @@ export default function App() {
           <div
             ref={scrollContainerRef}
             onScroll={handleMessagesScroll}
-            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-6 md:px-8 py-4 space-y-4 scrollbar-thin min-w-0"
+            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 sm:px-6 md:px-8 py-4 space-y-4 scrollbar-thin min-w-0"
           >
             {!activeConversation || activeConversation.messages.length === 0 ? (
               <WelcomeHero

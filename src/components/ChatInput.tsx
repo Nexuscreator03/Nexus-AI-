@@ -82,7 +82,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      const newHeight = Math.max(52, Math.min(textareaRef.current.scrollHeight, 200));
+      const maxHeight = typeof window !== 'undefined' && window.innerWidth < 640 ? 120 : 200;
+      const newHeight = Math.max(50, Math.min(textareaRef.current.scrollHeight, maxHeight));
       textareaRef.current.style.height = `${newHeight}px`;
     }
   }, [input]);
@@ -465,7 +466,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div
-      className="w-full max-w-4xl mx-auto p-2 sm:p-3 md:p-4 min-w-0 shrink-0"
+      className="w-full max-w-4xl mx-auto px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3 md:p-4 min-w-0 shrink-0"
       onDragOver={(e) => {
         e.preventDefault();
         setIsDragging(true);
@@ -821,6 +822,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setInput(e.target.value);
                 if (inputError) setInputError(null);
               }}
+              onFocus={() => {
+                window.scrollTo(0, 0);
+              }}
               onKeyDown={handleKeyDown}
               rows={2}
               placeholder={
@@ -829,7 +833,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   : 'Pergunte qualquer coisa ao NEXUS AI...'
               }
               disabled={isLoading}
-              className="w-full min-w-0 bg-transparent text-slate-100 placeholder:text-slate-400/80 text-[14px] sm:text-[15px] resize-none focus:outline-none min-h-[54px] sm:min-h-[52px] max-h-[200px] py-2 px-1 leading-relaxed font-normal"
+              className="w-full min-w-0 bg-transparent text-slate-100 placeholder:text-slate-400/80 text-[14px] sm:text-[15px] resize-none focus:outline-none min-h-[50px] sm:min-h-[52px] max-h-[120px] sm:max-h-[200px] py-2 px-1 leading-relaxed font-normal"
             />
 
             {input.length > 0 && (
@@ -899,10 +903,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       </div>
 
       <div
-        className={`flex items-center justify-between mt-1.5 px-2 text-[10px] font-mono ${colors.accentDim}`}
+        className={`flex items-center justify-between gap-2 mt-1 sm:mt-1.5 px-2 text-[9px] sm:text-[10px] font-mono min-w-0 ${colors.accentDim}`}
       >
-        <span>NEXUS AI • NEXUSBYE</span>
-        <span>DRIVE, ÁUDIO, GPS E PESQUISA PROFUNDA</span>
+        <span className="shrink-0">NEXUS AI • NEXUSBYE</span>
+        <span className="truncate text-right">DRIVE, ÁUDIO, GPS E PESQUISA PROFUNDA</span>
       </div>
     </div>
   );

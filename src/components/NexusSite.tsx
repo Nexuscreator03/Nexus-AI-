@@ -103,7 +103,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
   const publicUrl = getPublicNexusUrl();
 
   return (
-    <div className="h-dvh w-full overflow-y-auto overflow-x-hidden bg-[#070A12] text-slate-100 font-['Plus_Jakarta_Sans'] antialiased selection:bg-sky-500/30 selection:text-sky-100">
+    <div className="h-full min-h-0 w-full overflow-y-auto overflow-x-hidden overscroll-y-contain bg-[#070A12] text-slate-100 font-['Plus_Jakarta_Sans'] antialiased selection:bg-sky-500/30 selection:text-sky-100">
       {/* Top Bar Contract: 3 zones separated by gap-8 */}
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#070A12]/90 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">

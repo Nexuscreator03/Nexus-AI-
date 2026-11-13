@@ -81,7 +81,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header
-      className={`h-14 md:h-16 border-b px-2.5 sm:px-4 md:px-6 flex items-center justify-between gap-2 sticky top-0 z-30 shrink-0 transition-colors duration-300 ${colors.headerBg}`}
+      className={`h-14 md:h-16 border-b px-2.5 sm:px-4 md:px-6 flex items-center justify-between gap-2 relative z-30 shrink-0 w-full max-w-full overflow-hidden transition-colors duration-300 ${colors.headerBg}`}
     >
       <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
         <button
