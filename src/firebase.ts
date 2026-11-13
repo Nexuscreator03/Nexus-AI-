@@ -97,9 +97,30 @@ export function subscribeToAuth(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
 
+function formatFirebaseAuthError(err: any, fallback: string): string {
+  const code = err?.code || '';
+  if (code === 'auth/popup-blocked') {
+    return 'O pop-up de login foi bloqueado pelo navegador. Libere pop-ups para este site e tente novamente.';
+  }
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return 'Login cancelado antes da conclusão.';
+  }
+  if (code === 'auth/unauthorized-domain') {
+    return 'Este domínio ainda não está autorizado no Firebase Auth.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Falha de rede ao conectar com sua conta Google. Verifique sua conexão.';
+  }
+  return err?.message || fallback;
+}
+
 export async function signInWithEmailAccount(): Promise<User> {
-  const result = await signInWithPopup(auth, accountProvider);
-  return result.user;
+  try {
+    const result = await signInWithPopup(auth, accountProvider);
+    return result.user;
+  } catch (err: any) {
+    throw new Error(formatFirebaseAuthError(err, 'Não foi possível entrar com sua conta Google.'));
+  }
 }
 
 export async function signOutEmailAccount(): Promise<void> {
@@ -110,15 +131,22 @@ export async function saveCloudUserProfile(user: User, profile: UserProfile): Pr
   if (!user.uid || !user.email) return;
   const profilePath = `users/${user.uid}/private/profile`;
 
+  const allowedDepth = ['high', 'balanced', 'simple'].includes(profile.technicalDepth)
+    ? profile.technicalDepth
+    : 'high';
+  const allowedVibe = ['humorous', 'technical', 'direct', 'balanced'].includes(profile.userVibe)
+    ? profile.userVibe
+    : 'humorous';
+
   const payload: Record<string, any> = {
     uid: user.uid,
     email: user.email.slice(0, 254),
     humorPreference: Boolean(profile.humorPreference),
-    technicalDepth: profile.technicalDepth || 'high',
+    technicalDepth: allowedDepth,
     autonomyDecisiveness: Boolean(profile.autonomyDecisiveness),
     likedTopics: (profile.likedTopics || []).filter(Boolean).map((s) => s.slice(0, 120)).slice(0, 30),
     dislikedTopics: (profile.dislikedTopics || []).filter(Boolean).map((s) => s.slice(0, 120)).slice(0, 30),
-    userVibe: profile.userVibe || 'humorous',
+    userVibe: allowedVibe,
     totalLikes: Math.max(0, Number(profile.totalLikes) || 0),
     totalDislikes: Math.max(0, Number(profile.totalDislikes) || 0),
     notes: (profile.notes || []).filter(Boolean).map((s) => s.slice(0, 200)).slice(0, 50),

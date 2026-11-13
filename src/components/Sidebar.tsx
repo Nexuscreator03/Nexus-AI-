@@ -20,6 +20,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   Mail,
+  MoreHorizontal,
+  Download,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { Conversation, PersonaMode, ThemeMode, Project, UserProfile } from '../types/chat';
@@ -28,6 +30,7 @@ import { ThemeSelector } from './ThemeSelector';
 import { CyberGearLogo } from './CyberGearLogo';
 import { getThemeColors } from '../utils/themeStyles';
 import { getPublicNexusUrl } from './Navbar';
+import { copyTextToClipboard } from '../utils/clipboard';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -43,6 +46,8 @@ interface SidebarProps {
   onCreateProject: (name: string, color: string, conversationIds?: string[]) => void;
   onDeleteProject: (id: string) => void;
   onClearAll: (type?: 'all' | 'archived') => void;
+  onExportChat?: () => void;
+  hasActiveMessages?: boolean;
   isOpen: boolean;
   onClose: () => void;
   persona: PersonaMode;
@@ -70,6 +75,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCreateProject,
   onDeleteProject,
   onClearAll,
+  onExportChat,
+  hasActiveMessages = false,
   isOpen,
   onClose,
   persona,
@@ -147,11 +154,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleCopyLink = async () => {
     cyberAudio.playClick();
     const shareUrl = getPublicNexusUrl();
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2500);
-    } catch {
+    const ok = await copyTextToClipboard(shareUrl);
+    if (ok) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     }
@@ -160,6 +164,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const startRename = (conv: Conversation, e: React.MouseEvent) => {
     e.stopPropagation();
     dismissQuickPanel();
+    setAssigningConvId(null);
     setEditingId(conv.id);
     setEditTitle(conv.title);
   };
@@ -218,12 +223,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {isOpen && (
         <div
           onClick={onClose}
-          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 md:hidden transition-opacity"
+          className="absolute inset-0 bg-black/80 backdrop-blur-sm z-40 md:hidden transition-opacity"
         />
       )}
 
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 h-full min-h-0 w-72 sm:w-80 flex flex-col border-r backdrop-blur-xl transform transition-all duration-300 ease-in-out shrink-0 ${colors.sidebarBg} ${
+        className={`absolute md:static inset-y-0 left-0 z-50 h-full min-h-0 w-72 sm:w-80 flex flex-col border-r backdrop-blur-xl transform transition-all duration-300 ease-in-out shrink-0 ${colors.sidebarBg} ${
           isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
@@ -315,6 +320,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 cyberAudio.playClick();
                 setActiveTab('all');
                 setSelectedProjectId(null);
+                setAssigningConvId(null);
               }}
               className={`py-1.5 px-1 rounded-lg text-center transition-all flex flex-col items-center gap-0.5 ${
                 activeTab === 'all'
@@ -332,6 +338,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 cyberAudio.playClick();
                 setActiveTab('favorites');
                 setSelectedProjectId(null);
+                setAssigningConvId(null);
               }}
               className={`py-1.5 px-1 rounded-lg text-center transition-all flex flex-col items-center gap-0.5 ${
                 activeTab === 'favorites'
@@ -351,6 +358,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => {
                 cyberAudio.playClick();
                 setActiveTab('projects');
+                setAssigningConvId(null);
               }}
               className={`py-1.5 px-1 rounded-lg text-center transition-all flex flex-col items-center gap-0.5 ${
                 activeTab === 'projects'
@@ -368,6 +376,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 cyberAudio.playClick();
                 setActiveTab('archived');
                 setSelectedProjectId(null);
+                setAssigningConvId(null);
               }}
               className={`py-1.5 px-1 rounded-lg text-center transition-all flex flex-col items-center gap-0.5 ${
                 activeTab === 'archived'
@@ -538,7 +547,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={conv.id}
                   onClick={() => {
                     cyberAudio.playClick();
-                    if (window.innerWidth < 768 && isActive && isQuickOpen) {
+                    setAssigningConvId(null);
+                    if (window.innerWidth < 768 && isActive) {
                       dismissQuickPanel();
                       onClose();
                       return;
@@ -568,6 +578,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           type="text"
                           value={editTitle}
                           onChange={(e) => setEditTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setEditingId(null);
+                            }
+                          }}
                           onBlur={() => saveRename(conv.id)}
                           autoFocus
                           className="w-full bg-black/60 border border-cyan-400 px-1.5 py-0.5 rounded text-xs text-white focus:outline-none"
@@ -661,11 +677,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
 
                   {!isEditing && !isQuickOpen && (
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <div
+                      className={`flex items-center gap-0.5 transition-opacity shrink-0 ${
+                        isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                    >
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           cyberAudio.playClick();
+                          dismissQuickPanel();
                           setAssigningConvId(assigningConvId === conv.id ? null : conv.id);
                         }}
                         className={`p-1 rounded transition-colors ${
@@ -679,11 +701,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </button>
 
                       <button
+                        type="button"
                         onClick={(e) => startRename(conv, e)}
                         className="p-1 rounded text-slate-400 hover:text-cyan-300 transition-colors"
                         title="Renomear"
                       >
                         <Edit2 className="w-3 h-3" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cyberAudio.playClick();
+                          setAssigningConvId(null);
+                          triggerQuickPanel(conv.id);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-cyan-300 transition-colors"
+                        title="Favoritar, arquivar ou excluir"
+                      >
+                        <MoreHorizontal className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   )}
@@ -745,7 +782,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Aligned Global Memory + Adaptive Likes/Dislikes Status */}
         <div className="px-3 pb-1.5 shrink-0">
-          <div className={`px-3 py-2 rounded-xl bg-black/40 border text-[10px] font-mono flex items-center justify-between gap-2 text-slate-300 ${colors.borderSubtle}`}>
+          <button
+            type="button"
+            onClick={() => {
+              cyberAudio.playClick();
+              if (window.innerWidth < 768) onClose();
+              onOpenAccount();
+            }}
+            className={`w-full px-3 py-2 rounded-xl bg-black/40 hover:bg-black/60 border text-[10px] font-mono flex items-center justify-between gap-2 text-slate-300 transition-colors cursor-pointer ${colors.borderSubtle}`}
+            title="Abrir Memória Pessoal e Preferências"
+          >
             <span className={`flex items-center gap-1.5 font-medium min-w-0 truncate ${colors.accent}`}>
               <Brain className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">
@@ -763,7 +809,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>{userProfile?.totalDislikes ?? 0}</span>
               </span>
             </div>
-          </div>
+          </button>
         </div>
 
         {/* Personalizar Tema de Fundo */}
@@ -775,26 +821,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Footer info & Link */}
         <div className={`p-3 border-t bg-black/50 space-y-2 shrink-0 ${colors.borderSubtle}`}>
-          <button
-            onClick={handleCopyLink}
-            className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-xs font-mono transition-all ${
-              copiedLink
-                ? 'bg-emerald-950/60 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                : `${colors.badgeBg} hover:opacity-90`
-            }`}
-          >
-            {copiedLink ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="font-semibold">Link do NEXUS Copiado!</span>
-              </>
-            ) : (
-              <>
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Copiar Link do NEXUS</span>
-              </>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-xs font-mono transition-all ${
+                copiedLink
+                  ? 'bg-emerald-950/60 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                  : `${colors.badgeBg} hover:opacity-90`
+              }`}
+            >
+              {copiedLink ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="font-semibold">Link Copiado!</span>
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Copiar Link do NEXUS</span>
+                </>
+              )}
+            </button>
+
+            {hasActiveMessages && onExportChat && (
+              <button
+                type="button"
+                onClick={() => {
+                  cyberAudio.playClick();
+                  onExportChat();
+                }}
+                className={`p-2 rounded-lg border text-xs font-mono transition-all ${colors.badgeBg} hover:opacity-90`}
+                title="Exportar conversa em Markdown"
+              >
+                <Download className="w-4 h-4" />
+              </button>
             )}
-          </button>
+          </div>
 
           {/* Opções de Modo Neural (Padrão, Cyber, Dev, Direto) embaixo do link */}
           <div className="pt-0.5">

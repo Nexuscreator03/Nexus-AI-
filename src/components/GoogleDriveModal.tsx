@@ -254,6 +254,8 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
                   onClick={async () => {
                     await driveSignOut();
                     setNeedsAuth(true);
+                    setUserEmail(null);
+                    setError(null);
                     setFiles([]);
                   }}
                   className="inline-flex items-center gap-1 text-rose-300 hover:text-rose-200 px-2 py-0.5 rounded bg-rose-950/40 border border-rose-500/30"

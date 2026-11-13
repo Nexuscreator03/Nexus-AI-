@@ -35,6 +35,8 @@ interface ChatInputProps {
   locationError?: string | null;
   onToggleLocation?: () => void;
   onDismissLocationError?: () => void;
+  onInputFocus?: () => void;
+  isKeyboardOpen?: boolean;
   theme?: ThemeMode;
 }
 
@@ -49,6 +51,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   locationError,
   onToggleLocation,
   onDismissLocationError,
+  onInputFocus,
+  isKeyboardOpen = false,
   theme = 'cyber',
 }) => {
   const [input, setInput] = useState('');
@@ -76,29 +80,35 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
 
   const colors = getThemeColors(theme);
 
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      const maxHeight = typeof window !== 'undefined' && window.innerWidth < 640 ? 120 : 200;
-      const newHeight = Math.max(50, Math.min(textareaRef.current.scrollHeight, maxHeight));
+      const maxHeight = typeof window !== 'undefined' && window.innerWidth < 640 ? 110 : 200;
+      const newHeight = Math.max(46, Math.min(textareaRef.current.scrollHeight, maxHeight));
       textareaRef.current.style.height = `${newHeight}px`;
     }
   }, [input]);
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: Event) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowAttachMenu(false);
       }
     };
     if (showAttachMenu) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
     };
   }, [showAttachMenu]);
 
@@ -179,8 +189,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         'audio/mp4',
         'audio/ogg;codecs=opus',
       ];
+      if (typeof MediaRecorder === 'undefined') {
+        stopStreamTracks();
+        setInputError('Gravação de áudio não é suportada neste navegador.');
+        return;
+      }
+
       let chosenMime = '';
-      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported) {
+      if (MediaRecorder.isTypeSupported) {
         chosenMime = candidateTypes.find((t) => MediaRecorder.isTypeSupported(t)) || '';
       }
 
@@ -229,9 +245,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
           if (action === 'send') {
             cyberAudio.playSend();
-            onSendMessage(input.trim(), [...attachments, audioAtt]);
+            onSendMessage(inputRef.current.trim(), [...attachmentsRef.current, audioAtt]);
             setInput('');
             setAttachments([]);
+            if (textareaRef.current) {
+              textareaRef.current.style.height = 'auto';
+            }
           } else {
             cyberAudio.playClick();
             setAttachments((prev) => [...prev, audioAtt]);
@@ -466,7 +485,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div
-      className="w-full max-w-4xl mx-auto px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3 md:p-4 min-w-0 shrink-0"
+      className={`w-full max-w-4xl mx-auto px-2 pt-1.5 sm:p-3 md:p-4 min-w-0 shrink-0 ${
+        isKeyboardOpen ? 'pb-1.5' : 'pb-[max(0.5rem,env(safe-area-inset-bottom))]'
+      }`}
       onDragOver={(e) => {
         e.preventDefault();
         setIsDragging(true);
@@ -783,7 +804,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => {
+                      cyberAudio.playClick();
+                      setShowAttachMenu(false);
+                      fileInputRef.current?.click();
+                    }}
                     className="flex items-center gap-2.5 w-full p-2 rounded-xl text-xs font-mono text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
                   >
                     <FileText className={`w-4 h-4 ${colors.accent}`} />
@@ -792,7 +817,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => imageInputRef.current?.click()}
+                    onClick={() => {
+                      cyberAudio.playClick();
+                      setShowAttachMenu(false);
+                      imageInputRef.current?.click();
+                    }}
                     className="flex items-center gap-2.5 w-full p-2 rounded-xl text-xs font-mono text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
                   >
                     <ImageIcon className={`w-4 h-4 ${colors.accent}`} />
@@ -823,7 +852,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 if (inputError) setInputError(null);
               }}
               onFocus={() => {
-                window.scrollTo(0, 0);
+                onInputFocus?.();
               }}
               onKeyDown={handleKeyDown}
               rows={2}
@@ -833,7 +862,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   : 'Pergunte qualquer coisa ao NEXUS AI...'
               }
               disabled={isLoading}
-              className="w-full min-w-0 bg-transparent text-slate-100 placeholder:text-slate-400/80 text-[14px] sm:text-[15px] resize-none focus:outline-none min-h-[50px] sm:min-h-[52px] max-h-[120px] sm:max-h-[200px] py-2 px-1 leading-relaxed font-normal"
+              className="w-full min-w-0 bg-transparent text-slate-100 placeholder:text-slate-400/80 text-[14px] sm:text-[15px] resize-none focus:outline-none min-h-[46px] sm:min-h-[52px] max-h-[110px] sm:max-h-[200px] py-1.5 sm:py-2 px-1 leading-relaxed font-normal"
             />
 
             {input.length > 0 && (
@@ -841,7 +870,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 type="button"
                 onClick={() => {
                   setInput('');
-                  if (textareaRef.current) textareaRef.current.style.height = '52px';
+                  if (textareaRef.current) textareaRef.current.style.height = 'auto';
                 }}
                 className="p-1.5 text-slate-400 hover:text-white transition-colors shrink-0"
                 title="Limpar mensagem"
@@ -903,7 +932,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       </div>
 
       <div
-        className={`flex items-center justify-between gap-2 mt-1 sm:mt-1.5 px-2 text-[9px] sm:text-[10px] font-mono min-w-0 ${colors.accentDim}`}
+        className={`${
+          isKeyboardOpen ? 'hidden sm:flex' : 'flex'
+        } items-center justify-between gap-2 mt-1 sm:mt-1.5 px-2 text-[9px] sm:text-[10px] font-mono min-w-0 ${colors.accentDim}`}
       >
         <span className="shrink-0">NEXUS AI • NEXUSBYE</span>
         <span className="truncate text-right">DRIVE, ÁUDIO, GPS E PESQUISA PROFUNDA</span>

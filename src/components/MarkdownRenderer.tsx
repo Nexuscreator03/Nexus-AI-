@@ -12,12 +12,19 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 
+import { copyTextToClipboard } from '../utils/clipboard';
+
 interface MarkdownRendererProps {
   content: string;
   onPollVote?: (question: string, option: string) => void;
+  isBusy?: boolean;
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onPollVote }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+  content,
+  onPollVote,
+  isBusy = false,
+}) => {
   if (!content) return null;
 
   const parts = parseMarkdown(content);
@@ -28,7 +35,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onP
         if (part.type === 'code') {
           const lang = (part.language || 'code').toLowerCase();
           if (lang === 'poll' || lang === 'enquete') {
-            return <PollBlock key={index} content={part.content} onVote={onPollVote} />;
+            return (
+              <PollBlock
+                key={index}
+                content={part.content}
+                onVote={onPollVote}
+                isBusy={isBusy}
+              />
+            );
           }
           return <CodeBlock key={index} code={part.content} language={part.language || 'code'} />;
         }
@@ -41,9 +55,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onP
 interface PollBlockProps {
   content: string;
   onVote?: (question: string, option: string) => void;
+  isBusy?: boolean;
 }
 
-const PollBlock: React.FC<PollBlockProps> = ({ content, onVote }) => {
+const PollBlock: React.FC<PollBlockProps> = ({ content, onVote, isBusy = false }) => {
   const lines = content
     .split('\n')
     .map((l) => l.trim())
@@ -145,14 +160,17 @@ const PollBlock: React.FC<PollBlockProps> = ({ content, onVote }) => {
           </span>
           <button
             type="button"
-            disabled={sentToChat}
+            disabled={sentToChat || isBusy}
             onClick={() => {
+              if (isBusy) return;
               setSentToChat(true);
               onVote(question, options[selectedIdx]);
             }}
             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-mono transition-all ${
               sentToChat
                 ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 cursor-default'
+                : isBusy
+                ? 'bg-slate-800 border border-white/10 text-slate-400 cursor-not-allowed'
                 : 'bg-cyan-600/80 hover:bg-cyan-500 text-white border border-cyan-400/50'
             }`}
           >
@@ -161,6 +179,8 @@ const PollBlock: React.FC<PollBlockProps> = ({ content, onVote }) => {
                 <CheckCircle2 className="w-3 h-3" />
                 <span>Enviado</span>
               </>
+            ) : isBusy ? (
+              <span>Aguarde...</span>
             ) : (
               <>
                 <Send className="w-3 h-3" />
@@ -182,10 +202,12 @@ interface CodeBlockProps {
 const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    const ok = await copyTextToClipboard(code);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (

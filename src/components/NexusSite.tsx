@@ -13,12 +13,14 @@ import {
 import { CyberGearLogo } from './CyberGearLogo';
 import { PersonaMode, ThemeMode } from '../types/chat';
 import { getPublicNexusUrl } from './Navbar';
+import { copyTextToClipboard } from '../utils/clipboard';
 import heroGearImg from '../assets/images/hero_nexus_gear_1794526153247.jpg';
 import researchCoreImg from '../assets/images/nexus_research_core_1794526153590.jpg';
 
 interface NexusSiteProps {
   theme: ThemeMode;
   onEnterChat: (initialPrompt?: string, persona?: PersonaMode) => void;
+  viewportStyle?: React.CSSProperties;
 }
 
 interface PersonaPreview {
@@ -72,7 +74,7 @@ const PERSONA_PREVIEWS: PersonaPreview[] = [
   },
 ];
 
-export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
+export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat, viewportStyle }) => {
   const [quickPrompt, setQuickPrompt] = useState('');
   const [activePersona, setActivePersona] = useState<PersonaMode>('standard');
   const [copiedLink, setCopiedLink] = useState(false);
@@ -90,11 +92,8 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
 
   const handleCopyPublicLink = async () => {
     const publicUrl = getPublicNexusUrl();
-    try {
-      await navigator.clipboard.writeText(publicUrl);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2600);
-    } catch {
+    const ok = await copyTextToClipboard(publicUrl);
+    if (ok) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2600);
     }
@@ -103,7 +102,10 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
   const publicUrl = getPublicNexusUrl();
 
   return (
-    <div className="h-full min-h-0 w-full overflow-y-auto overflow-x-hidden overscroll-y-contain bg-[#070A12] text-slate-100 font-['Plus_Jakarta_Sans'] antialiased selection:bg-sky-500/30 selection:text-sky-100">
+    <div
+      style={viewportStyle}
+      className="w-full overflow-y-auto overflow-x-clip overscroll-y-contain bg-[#070A12] text-slate-100 font-['Plus_Jakarta_Sans'] antialiased selection:bg-sky-500/30 selection:text-sky-100"
+    >
       {/* Top Bar Contract: 3 zones separated by gap-8 */}
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#070A12]/90 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
@@ -159,7 +161,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
 
       <main>
         {/* Hero Section */}
-        <section id="inicio" className="border-b border-slate-800/80">
+        <section id="inicio" className="scroll-mt-16 border-b border-slate-800/80">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-20">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-stretch">
               {/* Left Column: Value Proposition + Interactive Quick-Ask */}
@@ -285,7 +287,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
         </section>
 
         {/* Capabilities Bento Grid */}
-        <section id="recursos" className="border-b border-slate-800/80 bg-[#090D18]">
+        <section id="recursos" className="scroll-mt-16 border-b border-slate-800/80 bg-[#090D18]">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
             <div className="max-w-2xl mb-12 space-y-3">
               <div className="text-xs font-mono text-sky-400">Recursos principais</div>
@@ -407,7 +409,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
         </section>
 
         {/* Architecture & Description Section */}
-        <section id="arquitetura" className="border-b border-slate-800/80">
+        <section id="arquitetura" className="scroll-mt-16 border-b border-slate-800/80">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-stretch">
               <div className="lg:col-span-5 flex">
@@ -469,7 +471,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
         </section>
 
         {/* Interactive Persona Modes Section */}
-        <section id="modos" className="border-b border-slate-800/80 bg-[#090D18]">
+        <section id="modos" className="scroll-mt-16 border-b border-slate-800/80 bg-[#090D18]">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
               <div className="space-y-2 max-w-xl">
@@ -560,7 +562,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({ theme, onEnterChat }) => {
         </section>
 
         {/* Public Access & Share Section */}
-        <section id="acesso">
+        <section id="acesso" className="scroll-mt-16">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-24">
             <div className="p-8 sm:p-12 rounded-2xl bg-[#0D1322] border border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
               <div className="space-y-3 max-w-2xl">

@@ -23,12 +23,16 @@ import { GroundingSources } from './GroundingSources';
 import { CyberGearLogo } from './CyberGearLogo';
 import { cyberAudio } from '../utils/audio';
 import { getThemeColors } from '../utils/themeStyles';
+import { copyTextToClipboard } from '../utils/clipboard';
+
+let activeStopSpeechFn: (() => void) | null = null;
 
 interface ChatMessageProps {
   message: Message;
   onRetry?: () => void;
   onFeedback?: (messageId: string, feedback: 'like' | 'dislike' | null) => void;
   onPollVote?: (question: string, option: string) => void;
+  isBusy?: boolean;
   theme?: ThemeMode;
 }
 
@@ -167,6 +171,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   onRetry,
   onFeedback,
   onPollVote,
+  isBusy = false,
   theme = 'cyber',
 }) => {
   const isUser = message.role === 'user';
@@ -181,6 +186,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
   const stopAllSpeech = () => {
     speechCancelledRef.current = true;
+    if (activeStopSpeechFn === stopAllSpeech) {
+      activeStopSpeechFn = null;
+    }
     if (audioElRef.current) {
       audioElRef.current.pause();
       audioElRef.current = null;
@@ -198,11 +206,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     };
   }, []);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message.content);
-    setCopied(true);
+  const handleCopy = async () => {
     cyberAudio.playClick();
-    setTimeout(() => setCopied(false), 2000);
+    const ok = await copyTextToClipboard(message.content);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const handleSpeak = async () => {
@@ -211,7 +221,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       return;
     }
 
+    if (activeStopSpeechFn && activeStopSpeechFn !== stopAllSpeech) {
+      activeStopSpeechFn();
+    }
     stopAllSpeech();
+    activeStopSpeechFn = stopAllSpeech;
     speechCancelledRef.current = false;
     setIsLoadingVoice(true);
     cyberAudio.playClick();
@@ -235,8 +249,6 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             const mime = ttsData.mimeType || 'audio/wav';
             const audio = new Audio(`data:${mime};base64,${ttsData.audioBase64}`);
             audioElRef.current = audio;
-            setIsLoadingVoice(false);
-            setIsSpeaking(true);
             audio.onended = () => {
               audioElRef.current = null;
               setIsSpeaking(false);
@@ -245,8 +257,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               audioElRef.current = null;
               setIsSpeaking(false);
             };
-            await audio.play();
-            return;
+            try {
+              setIsLoadingVoice(false);
+              setIsSpeaking(true);
+              await audio.play();
+              return;
+            } catch {
+              audio.pause();
+              audioElRef.current = null;
+              setIsSpeaking(false);
+              setIsLoadingVoice(true);
+            }
           }
 
           if (ttsData.cleanSpeechText) {
@@ -497,11 +518,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
         {previewImage && (
           <div
-            className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
+            className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
             onClick={() => setPreviewImage(null)}
           >
             <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
               <button
+                type="button"
                 onClick={() => setPreviewImage(null)}
                 className="absolute -top-10 right-0 p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
                 title="Fechar"
@@ -602,11 +624,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 </span>
               </div>
               <div className="text-sm text-slate-200 leading-relaxed min-w-0">
-                <MarkdownRenderer content={message.content} onPollVote={onPollVote} />
+                <MarkdownRenderer
+                  content={message.content}
+                  onPollVote={onPollVote}
+                  isBusy={isBusy}
+                />
               </div>
               {onRetry && (
                 <div className="pt-2">
                   <button
+                    type="button"
                     onClick={onRetry}
                     className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/40 text-cyan-300 hover:text-cyan-100 text-xs font-mono transition-colors shadow-[0_0_10px_rgba(6,182,212,0.2)]"
                   >
@@ -618,7 +645,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             </div>
           ) : (
             <>
-              <MarkdownRenderer content={message.content} onPollVote={onPollVote} />
+              <MarkdownRenderer
+                content={message.content}
+                onPollVote={onPollVote}
+                isBusy={isBusy}
+              />
 
               {message.groundingSources && message.groundingSources.length > 0 && (
                 <GroundingSources

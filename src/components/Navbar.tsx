@@ -11,6 +11,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { cyberAudio } from '../utils/audio';
+import { copyTextToClipboard } from '../utils/clipboard';
 import { CyberGearLogo } from './CyberGearLogo';
 import { ThemeMode } from '../types/chat';
 import { ThemeSelector } from './ThemeSelector';
@@ -62,11 +63,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const handleCopyLink = async () => {
     cyberAudio.playClick();
     const shareUrl = getPublicNexusUrl();
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2500);
-    } catch {
+    const ok = await copyTextToClipboard(shareUrl);
+    if (ok) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     }

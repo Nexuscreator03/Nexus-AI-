@@ -23,41 +23,65 @@ export const CameraModal: React.FC<CameraModalProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const colors = getThemeColors(theme);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const initCamera = async () => {
+      stopCamera();
+      setErrorMsg(null);
+      setIsCameraReady(false);
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Navegador não suporta acesso direto à câmera.');
+        }
+
+        let mediaStream: MediaStream;
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode },
+            audio: false,
+          });
+        } catch {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+
+        if (cancelled) {
+          mediaStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = mediaStream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          console.warn('Camera access error:', err);
+          setErrorMsg('Não foi possível acessar a câmera. Você também pode anexar uma foto existente.');
+        }
+      }
+    };
+
     if (isOpen) {
-      startCamera();
+      initCamera();
     } else {
       stopCamera();
       setCapturedPreview(null);
       setErrorMsg(null);
+      setIsCameraReady(false);
     }
+
     return () => {
+      cancelled = true;
       stopCamera();
     };
   }, [isOpen, facingMode]);
-
-  const startCamera = async () => {
-    stopCamera();
-    setErrorMsg(null);
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Navegador não suporta acesso direto à câmera.');
-      }
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode },
-        audio: false,
-      });
-      streamRef.current = mediaStream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
-    } catch (err: any) {
-      console.warn('Camera access error:', err);
-      setErrorMsg('Não foi possível acessar a câmera. Você também pode anexar uma foto existente.');
-    }
-  };
 
   const stopCamera = () => {
     if (streamRef.current) {
@@ -67,6 +91,7 @@ export const CameraModal: React.FC<CameraModalProps> = ({
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setIsCameraReady(false);
   };
 
   const switchCamera = () => {
@@ -76,12 +101,14 @@ export const CameraModal: React.FC<CameraModalProps> = ({
 
   const handleCapture = () => {
     if (!videoRef.current || !canvasRef.current) return;
-    cyberAudio.playClick();
     const video = videoRef.current;
+    if (!video.videoWidth || !video.videoHeight) return;
+
+    cyberAudio.playClick();
     const canvas = canvasRef.current;
 
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
@@ -94,7 +121,7 @@ export const CameraModal: React.FC<CameraModalProps> = ({
   const confirmCapture = () => {
     if (!capturedPreview) return;
     cyberAudio.playClick();
-    const base64 = capturedPreview.replace(/^data:image\/[a-z]+;base64,/, '');
+    const base64 = capturedPreview.replace(/^data:[^;]+;base64,/, '');
     onCapture(capturedPreview, base64);
     onClose();
   };
@@ -107,8 +134,14 @@ export const CameraModal: React.FC<CameraModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-md animate-fadeIn">
-      <div className={`relative w-full max-w-lg rounded-2xl border p-4 shadow-2xl flex flex-col ${colors.panelBg} ${colors.border}`}>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-3 bg-black/80 backdrop-blur-md animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={`relative w-full max-w-lg rounded-2xl border p-4 shadow-2xl flex flex-col ${colors.panelBg} ${colors.border}`}
+      >
         {/* Top Header */}
         <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
           <div className="flex items-center gap-2">
@@ -118,6 +151,7 @@ export const CameraModal: React.FC<CameraModalProps> = ({
             </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
           >
@@ -143,7 +177,7 @@ export const CameraModal: React.FC<CameraModalProps> = ({
                       const reader = new FileReader();
                       reader.onload = () => {
                         const dataUrl = reader.result as string;
-                        const base64 = dataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+                        const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
                         onCapture(dataUrl, base64);
                         onClose();
                       };
@@ -162,6 +196,8 @@ export const CameraModal: React.FC<CameraModalProps> = ({
                 autoPlay
                 playsInline
                 muted
+                onLoadedMetadata={() => setIsCameraReady(true)}
+                onCanPlay={() => setIsCameraReady(true)}
                 className="w-full h-full object-cover"
               />
               {/* Sci-fi Crosshairs Overlay */}
@@ -182,12 +218,14 @@ export const CameraModal: React.FC<CameraModalProps> = ({
           {capturedPreview ? (
             <>
               <button
+                type="button"
                 onClick={retake}
                 className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-mono transition-colors"
               >
                 Tirar outra
               </button>
               <button
+                type="button"
                 onClick={confirmCapture}
                 className={`flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-mono font-bold transition-all ${colors.sendBtn}`}
               >
@@ -198,22 +236,27 @@ export const CameraModal: React.FC<CameraModalProps> = ({
           ) : (
             <>
               <button
+                type="button"
                 onClick={switchCamera}
-                className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
+                disabled={Boolean(errorMsg)}
+                className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 transition-colors disabled:opacity-40"
                 title="Trocar câmera"
               >
                 <RefreshCw className="w-4 h-4" />
               </button>
 
               <button
+                type="button"
                 onClick={handleCapture}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-mono font-bold transition-all ${colors.sendBtn}`}
+                disabled={!isCameraReady || Boolean(errorMsg)}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-mono font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${colors.sendBtn}`}
               >
                 <Camera className="w-4 h-4" />
                 Capturar Foto
               </button>
 
               <button
+                type="button"
                 onClick={onClose}
                 className="px-3 py-2 text-xs font-mono text-slate-400 hover:text-white"
               >

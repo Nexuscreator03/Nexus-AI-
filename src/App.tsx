@@ -173,7 +173,8 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
 
-  const [isThinking, setIsThinking] = useState(false);
+  const [thinkingConvIds, setThinkingConvIds] = useState<Set<string>>(() => new Set());
+  const isThinking = activeId ? thinkingConvIds.has(activeId) : false;
   const [useSearch, setUseSearch] = useState(false);
   const [persona, setPersona] = useState<PersonaMode>('standard');
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -198,6 +199,33 @@ export default function App() {
     return 'site';
   });
 
+  const [viewportBox, setViewportBox] = useState<{
+    height: number | null;
+    offsetTop: number;
+    isKeyboardOpen: boolean;
+  }>(() => {
+    if (typeof window === 'undefined') {
+      return { height: null, offsetTop: 0, isKeyboardOpen: false };
+    }
+    const vv = window.visualViewport;
+    const height = vv ? Math.round(vv.height) : window.innerHeight;
+    const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+    return { height, offsetTop, isKeyboardOpen: false };
+  });
+
+  const appShellRef = useRef<HTMLDivElement>(null);
+  const mainColRef = useRef<HTMLDivElement>(null);
+  const baselineHeightRef = useRef<number>(
+    typeof window !== 'undefined'
+      ? Math.round(window.visualViewport?.height || window.innerHeight)
+      : 0
+  );
+  const lastWidthRef = useRef<number>(
+    typeof window !== 'undefined' ? window.innerWidth : 0
+  );
+  const pendingScrollToBottomRef = useRef(false);
+  const syncViewportRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     const handlePopState = () => {
       if (window.location.pathname.startsWith('/chat')) {
@@ -210,54 +238,117 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Keep layout height & top locked to visualViewport when mobile virtual keyboard opens/closes
+  // Dynamically bind app height & top to window.visualViewport so mobile virtual keyboard never clips Navbar
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const root = document.documentElement;
     let rafId: number | null = null;
-    let lastHeight = window.visualViewport ? Math.round(window.visualViewport.height) : window.innerHeight;
+    let lastHeight = Math.round(window.visualViewport?.height || window.innerHeight);
     const timers: number[] = [];
+
+    const resetAncestorScrolls = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (document.documentElement.scrollTop !== 0 || document.documentElement.scrollLeft !== 0) {
+        document.documentElement.scrollTop = 0;
+        document.documentElement.scrollLeft = 0;
+      }
+      if (document.body.scrollTop !== 0 || document.body.scrollLeft !== 0) {
+        document.body.scrollTop = 0;
+        document.body.scrollLeft = 0;
+      }
+      const rootEl = document.getElementById('root');
+      if (rootEl && (rootEl.scrollTop !== 0 || rootEl.scrollLeft !== 0)) {
+        rootEl.scrollTop = 0;
+        rootEl.scrollLeft = 0;
+      }
+      if (appShellRef.current && (appShellRef.current.scrollTop !== 0 || appShellRef.current.scrollLeft !== 0)) {
+        appShellRef.current.scrollTop = 0;
+        appShellRef.current.scrollLeft = 0;
+      }
+      if (mainColRef.current && (mainColRef.current.scrollTop !== 0 || mainColRef.current.scrollLeft !== 0)) {
+        mainColRef.current.scrollTop = 0;
+        mainColRef.current.scrollLeft = 0;
+      }
+    };
+
+    const isTextInputFocused = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'TEXTAREA' || tag === 'INPUT' || el.isContentEditable;
+    };
 
     const syncViewportMetrics = () => {
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         const vv = window.visualViewport;
-        const height = vv ? Math.round(vv.height) : window.innerHeight;
+        const height = Math.round(vv ? vv.height : window.innerHeight);
         const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+        const width = window.innerWidth;
 
-        root.style.setProperty('--nexus-viewport-height', `${height}px`);
-        root.style.setProperty('--nexus-viewport-top', `${offsetTop}px`);
-
-        if (window.scrollY !== 0 || window.scrollX !== 0) {
-          window.scrollTo(0, 0);
-        }
-        if (document.documentElement.scrollTop !== 0) {
-          document.documentElement.scrollTop = 0;
-        }
-        if (document.body.scrollTop !== 0) {
-          document.body.scrollTop = 0;
+        if (Math.abs(width - lastWidthRef.current) > 40) {
+          lastWidthRef.current = width;
+          baselineHeightRef.current = height;
+        } else if (!isTextInputFocused() || height >= baselineHeightRef.current) {
+          baselineHeightRef.current = height;
         }
 
-        // If keyboard opened (height shrank significantly) and user was near bottom, keep latest message visible
+        const isKeyboardOpen = baselineHeightRef.current - height > 110;
+
+        // Track if user was near bottom right as the keyboard shrinks the messages pane
         if (height < lastHeight - 80) {
           const scroller = scrollContainerRef.current;
           if (scroller) {
             const dist = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
             if (dist < 220) {
-              messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+              pendingScrollToBottomRef.current = true;
             }
           }
         }
         lastHeight = height;
+
+        setViewportBox((prev) =>
+          prev.height === height &&
+          prev.offsetTop === offsetTop &&
+          prev.isKeyboardOpen === isKeyboardOpen
+            ? prev
+            : { height, offsetTop, isKeyboardOpen }
+        );
+
+        resetAncestorScrolls();
       });
     };
 
     const scheduleDelayedSync = () => {
       syncViewportMetrics();
-      [100, 280, 480].forEach((delay) => {
+      [80, 220, 420].forEach((delay) => {
         const id = window.setTimeout(syncViewportMetrics, delay);
         timers.push(id);
       });
+    };
+
+    syncViewportRef.current = scheduleDelayedSync;
+
+    const handleCaptureScroll = (e: Event) => {
+      const target = e.target;
+      const rootEl = document.getElementById('root');
+      if (
+        target === document ||
+        target === document.documentElement ||
+        target === document.body ||
+        target === rootEl ||
+        target === appShellRef.current ||
+        target === mainColRef.current
+      ) {
+        resetAncestorScrolls();
+        syncViewportMetrics();
+      }
+    };
+
+    const handleFocusOut = () => {
+      // Allow baseline to restore cleanly once keyboard closes
+      scheduleDelayedSync();
     };
 
     syncViewportMetrics();
@@ -270,9 +361,11 @@ export default function App() {
     window.addEventListener('resize', syncViewportMetrics);
     window.addEventListener('orientationchange', scheduleDelayedSync);
     window.addEventListener('focusin', scheduleDelayedSync);
-    window.addEventListener('focusout', scheduleDelayedSync);
+    window.addEventListener('focusout', handleFocusOut);
+    document.addEventListener('scroll', handleCaptureScroll, true);
 
     return () => {
+      syncViewportRef.current = null;
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       timers.forEach((id) => window.clearTimeout(id));
       if (vv) {
@@ -282,9 +375,19 @@ export default function App() {
       window.removeEventListener('resize', syncViewportMetrics);
       window.removeEventListener('orientationchange', scheduleDelayedSync);
       window.removeEventListener('focusin', scheduleDelayedSync);
-      window.removeEventListener('focusout', scheduleDelayedSync);
+      window.removeEventListener('focusout', handleFocusOut);
+      document.removeEventListener('scroll', handleCaptureScroll, true);
     };
   }, []);
+
+  useEffect(() => {
+    if (!pendingScrollToBottomRef.current) return;
+    pendingScrollToBottomRef.current = false;
+    const scroller = scrollContainerRef.current;
+    if (scroller) {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+  }, [viewportBox.height]);
 
   const navigateToView = (nextView: 'site' | 'chat') => {
     setViewMode(nextView);
@@ -298,7 +401,7 @@ export default function App() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const latestConversationsRef = useRef<Conversation[]>(conversations);
   latestConversationsRef.current = conversations;
   const syncedUidRef = useRef<string | null>(null);
@@ -323,22 +426,18 @@ export default function App() {
           loadCloudProjects(user.uid).catch(() => [] as Project[]),
         ]);
 
-        setUserProfile((local) => {
-          const merged: UserProfile = {
-            ...local,
-            ...(cloudProfile || {}),
-            email: user.email || cloudProfile?.email || local.email,
-            name: cloudProfile?.name || local.name || user.displayName || undefined,
-            city: cloudProfile?.city || local.city,
-            likedTopics: mergeStringArrays(cloudProfile?.likedTopics, local.likedTopics, 30),
-            dislikedTopics: mergeStringArrays(cloudProfile?.dislikedTopics, local.dislikedTopics, 30),
-            notes: mergeStringArrays(cloudProfile?.notes, local.notes, 50),
-            totalLikes: Math.max(cloudProfile?.totalLikes || 0, local.totalLikes || 0),
-            totalDislikes: Math.max(cloudProfile?.totalDislikes || 0, local.totalDislikes || 0),
-          };
-          saveCloudUserProfile(user, merged).catch(() => {});
-          return merged;
-        });
+        setUserProfile((local) => ({
+          ...local,
+          ...(cloudProfile || {}),
+          email: user.email || cloudProfile?.email || local.email,
+          name: cloudProfile?.name || local.name || user.displayName || undefined,
+          city: cloudProfile?.city || local.city,
+          likedTopics: mergeStringArrays(cloudProfile?.likedTopics, local.likedTopics, 30),
+          dislikedTopics: mergeStringArrays(cloudProfile?.dislikedTopics, local.dislikedTopics, 30),
+          notes: mergeStringArrays(cloudProfile?.notes, local.notes, 50),
+          totalLikes: Math.max(cloudProfile?.totalLikes || 0, local.totalLikes || 0),
+          totalDislikes: Math.max(cloudProfile?.totalDislikes || 0, local.totalDislikes || 0),
+        }));
 
         const cloudIds = new Set(cloudConvs.map((c) => c.id));
         const localOnlyConvs = latestConversationsRef.current.filter((c) => !cloudIds.has(c.id));
@@ -437,7 +536,14 @@ export default function App() {
   }, [activeId]);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const el = scrollContainerRef.current;
+    if (el) {
+      if (behavior === 'auto') {
+        el.scrollTop = el.scrollHeight;
+      } else {
+        el.scrollTo({ top: el.scrollHeight, behavior });
+      }
+    }
     setShowScrollBottom(false);
   };
 
@@ -598,6 +704,16 @@ export default function App() {
   };
 
   const handleDeleteConversation = (id: string) => {
+    const controller = abortControllersRef.current.get(id);
+    if (controller) {
+      controller.abort();
+      abortControllersRef.current.delete(id);
+      setThinkingConvIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
       setActiveId(null);
@@ -692,6 +808,15 @@ export default function App() {
   const handleClearAll = (type: 'all' | 'archived' = 'all') => {
     if (type === 'archived') {
       const toDelete = conversations.filter((c) => c.isArchived);
+      toDelete.forEach((c) => {
+        abortControllersRef.current.get(c.id)?.abort();
+        abortControllersRef.current.delete(c.id);
+      });
+      setThinkingConvIds((prev) => {
+        const next = new Set(prev);
+        toDelete.forEach((c) => next.delete(c.id));
+        return next;
+      });
       setConversations((prev) => prev.filter((c) => !c.isArchived));
       if (activeConversation?.isArchived) {
         setActiveId(null);
@@ -701,6 +826,9 @@ export default function App() {
       }
     } else {
       const toDelete = [...conversations];
+      abortControllersRef.current.forEach((ctrl) => ctrl.abort());
+      abortControllersRef.current.clear();
+      setThinkingConvIds(new Set());
       setConversations([]);
       setActiveId(null);
       if (authUser) {
@@ -782,11 +910,15 @@ export default function App() {
     attachments?: Attachment[],
     searchOverride?: boolean,
     personaOverride?: PersonaMode,
-    forceNewConv?: boolean
+    forceNewConv?: boolean,
+    retryTarget?: { convId: string; baseMessages: Message[] }
   ) => {
     const hasAttachments = Boolean(attachments && attachments.length > 0);
     const trimmed = content.trim();
-    if ((!trimmed && !hasAttachments) || isThinking) return;
+    if (!trimmed && !hasAttachments) return;
+
+    const effectiveTargetId = retryTarget?.convId || (forceNewConv ? null : activeId);
+    if (effectiveTargetId && thinkingConvIds.has(effectiveTargetId)) return;
 
     const effectiveSearch = searchOverride !== undefined ? searchOverride : useSearch;
     const effectivePersona = personaOverride || persona;
@@ -818,12 +950,12 @@ export default function App() {
       attachments: hasAttachments ? attachments : undefined,
     };
 
-    let targetConvId = forceNewConv ? null : activeId;
+    let targetConvId = effectiveTargetId;
     let currentMessages: Message[] = [];
     let convSnapshot: Conversation | null = null;
 
-    if (!targetConvId || !conversations.some((c) => c.id === targetConvId)) {
-      const newId = 'conv-' + Date.now();
+    if (!targetConvId || !latestConversationsRef.current.some((c) => c.id === targetConvId)) {
+      const newId = 'conv-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
       const titleRaw = finalContent || (hasAttachments ? attachments![0].name : 'Nova Conversa');
       const newTitle = titleRaw.length > 38 ? titleRaw.slice(0, 38) + '...' : titleRaw;
       const newConv: Conversation = {
@@ -840,7 +972,9 @@ export default function App() {
       currentMessages = [userMsg];
       convSnapshot = newConv;
     } else {
-      currentMessages = [...(activeConversation?.messages || []), userMsg];
+      const existingConv = latestConversationsRef.current.find((c) => c.id === targetConvId);
+      const baseMessages = retryTarget ? retryTarget.baseMessages : existingConv?.messages || [];
+      currentMessages = [...baseMessages, userMsg];
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== targetConvId) return c;
@@ -859,12 +993,17 @@ export default function App() {
       syncConvToCloud(convSnapshot);
     }
 
-    setIsThinking(true);
+    const activeConvKey = targetConvId!;
+    setThinkingConvIds((prev) => {
+      const next = new Set(prev);
+      next.add(activeConvKey);
+      return next;
+    });
     cyberAudio.playNeuralPulse();
 
-    abortControllerRef.current?.abort();
+    abortControllersRef.current.get(activeConvKey)?.abort();
     const controller = new AbortController();
-    abortControllerRef.current = controller;
+    abortControllersRef.current.set(activeConvKey, controller);
 
     try {
       const now = new Date();
@@ -887,8 +1026,8 @@ export default function App() {
       // Build global cross-conversation memory context from ALL other chats
       const globalMemoryContext = buildCrossConversationMemory(
         finalContent,
-        conversations,
-        targetConvId
+        latestConversationsRef.current,
+        activeConvKey
       );
 
       const formattedHistory = currentMessages.map((m) => ({
@@ -934,7 +1073,7 @@ export default function App() {
 
       setConversations((prev) =>
         prev.map((c) => {
-          if (c.id !== targetConvId) return c;
+          if (c.id !== activeConvKey) return c;
           const updated = {
             ...c,
             messages: [...c.messages, modelMsg],
@@ -961,7 +1100,7 @@ export default function App() {
 
       setConversations((prev) =>
         prev.map((c) => {
-          if (c.id !== targetConvId) return c;
+          if (c.id !== activeConvKey) return c;
           const updated = {
             ...c,
             messages: [...c.messages, errorMsg],
@@ -972,19 +1111,31 @@ export default function App() {
         })
       );
     } finally {
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
+      if (abortControllersRef.current.get(activeConvKey) === controller) {
+        abortControllersRef.current.delete(activeConvKey);
+        setThinkingConvIds((prev) => {
+          if (!prev.has(activeConvKey)) return prev;
+          const next = new Set(prev);
+          next.delete(activeConvKey);
+          return next;
+        });
       }
-      setIsThinking(false);
     }
   };
 
   const handleStopGeneration = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+    if (!activeId) return;
+    const controller = abortControllersRef.current.get(activeId);
+    if (controller) {
+      controller.abort();
+      abortControllersRef.current.delete(activeId);
     }
-    setIsThinking(false);
+    setThinkingConvIds((prev) => {
+      if (!prev.has(activeId)) return prev;
+      const next = new Set(prev);
+      next.delete(activeId);
+      return next;
+    });
   };
 
   const handlePollVote = (question: string, option: string) => {
@@ -992,11 +1143,24 @@ export default function App() {
   };
 
   const handleRetryLast = () => {
-    if (!activeConversation) return;
-    const lastUserMsg = [...activeConversation.messages].reverse().find((m) => m.role === 'user');
-    if (lastUserMsg) {
-      handleSendMessage(lastUserMsg.content, lastUserMsg.attachments);
+    if (!activeConversation || isThinking) return;
+    const msgs = [...activeConversation.messages];
+    while (msgs.length > 0 && msgs[msgs.length - 1].error) {
+      msgs.pop();
     }
+    const lastUserIdx = [...msgs].reverse().findIndex((m) => m.role === 'user');
+    if (lastUserIdx === -1) return;
+    const actualIdx = msgs.length - 1 - lastUserIdx;
+    const lastUserMsg = msgs[actualIdx];
+    const baseMessages = msgs.slice(0, actualIdx);
+    handleSendMessage(
+      lastUserMsg.content,
+      lastUserMsg.attachments,
+      undefined,
+      undefined,
+      false,
+      { convId: activeConversation.id, baseMessages }
+    );
   };
 
   const handleEnterChatFromSite = (initialPrompt?: string, selectedPersona?: PersonaMode) => {
@@ -1009,13 +1173,29 @@ export default function App() {
     }
   };
 
+  const viewportStyle: React.CSSProperties = {
+    position: 'fixed',
+    left: 0,
+    right: 0,
+    top: `${viewportBox.offsetTop}px`,
+    height: viewportBox.height ? `${viewportBox.height}px` : '100dvh',
+  };
+
   if (viewMode === 'site') {
-    return <NexusSite theme={theme} onEnterChat={handleEnterChatFromSite} />;
+    return (
+      <NexusSite
+        theme={theme}
+        onEnterChat={handleEnterChatFromSite}
+        viewportStyle={viewportStyle}
+      />
+    );
   }
 
   return (
     <div
-      className={`relative flex h-full min-h-0 w-full max-w-full overflow-hidden text-slate-100 select-text ${
+      ref={appShellRef}
+      style={viewportStyle}
+      className={`flex w-full max-w-full overflow-clip text-slate-100 select-text ${
         theme === 'simple'
           ? 'theme-simple'
           : theme === 'nebula'
@@ -1070,6 +1250,8 @@ export default function App() {
         onCreateProject={handleCreateProject}
         onDeleteProject={handleDeleteProject}
         onClearAll={handleClearAll}
+        onExportChat={handleExportChat}
+        hasActiveMessages={Boolean(activeConversation && activeConversation.messages.length > 0)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         persona={persona}
@@ -1081,7 +1263,10 @@ export default function App() {
         onOpenAccount={() => setIsAccountOpen(true)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0 w-full max-w-full overflow-hidden h-full relative z-20">
+      <div
+        ref={mainColRef}
+        className="flex-1 flex flex-col min-w-0 min-h-0 w-full max-w-full overflow-clip h-full relative z-20"
+      >
         <Navbar
           onOpenSidebar={() => setSidebarOpen(true)}
           onNewConversation={handleNewConversation}
@@ -1094,7 +1279,7 @@ export default function App() {
           onOpenSite={() => navigateToView('site')}
         />
 
-        <div className="relative flex-1 min-h-0 flex flex-col min-w-0">
+        <div className="relative flex-1 min-h-0 flex flex-col min-w-0 overflow-clip">
           <div
             ref={scrollContainerRef}
             onScroll={handleMessagesScroll}
@@ -1119,6 +1304,7 @@ export default function App() {
                     onRetry={message.error ? handleRetryLast : undefined}
                     onFeedback={handleFeedback}
                     onPollVote={handlePollVote}
+                    isBusy={isThinking}
                     theme={theme}
                   />
                 ))}
@@ -1163,6 +1349,8 @@ export default function App() {
             setLocationError(null);
             if (locationStatus === 'error') setLocationStatus('idle');
           }}
+          onInputFocus={() => syncViewportRef.current?.()}
+          isKeyboardOpen={viewportBox.isKeyboardOpen}
           theme={theme}
         />
       </div>

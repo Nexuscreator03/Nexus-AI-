@@ -483,6 +483,11 @@ function classifyQueryDepth(query: string, useSearch: boolean): ResearchDepth {
     return 'standard_search';
   }
 
+  // Questions specifically about NexusBye / NEXUS AI / Paulo Victor should answer directly from system identity
+  if (!useSearch && /\b(nexusbye|nexus\s*ai|paulo\s*victor)\b/i.test(query)) {
+    return 'fast';
+  }
+
   const realtimeRegex =
     /\b(pesquise|busque|not[ií]cias|atual|hoje|agora|quem [eé]|o que [eé]|significa|onde fica|coordenadas|dist[aâ]ncia|clima|tempo|previs[aã]o|chuva|temperatura|cota[çc][aã]o|d[oó]lar|bitcoin|aqui|minha localiza[çc][aã]o|onde estou|perto de mim)\b/i;
   if (realtimeRegex.test(query)) {
@@ -923,7 +928,8 @@ MODO ATIVO: PADRÃO (Base Equilibrada, Acolhedora & Versátil) ✨
     const richFormattingAndPersonality = isConciseMode
       ? `Diretrizes do Modo Direto:
 1. Precisão temporal, geográfica e de memória global absoluta com base nos dados reais fornecidos.
-2. Responda somente o mínimo essencial com clareza total.`
+2. Responda somente o mínimo essencial com clareza total.
+3. Identidade e Criador (OBRIGATÓRIO): Você foi desenvolvido pela NexusBye, cujo criador e fundador é Paulo Victor. Sempre que perguntarem quem é o criador da NexusBye (ou quem criou você / o NEXUS AI), responda claramente Paulo Victor.`
       : `Diretrizes de Personalidade, Conforto e Visual:
 1. Ainda Mais Amigável, Acolhedor e Confortável: Seja genuinamente simpático, carinhoso, gentil e bom de papo! Crie um ambiente leve e confortável onde o usuário se sinta bem-vindo, usando humor leve quando combinar e respeitando 100% os gostos e limites salvos dele. REGRA DE OURO: NUNCA seja mal, frio, grosso ou insistente — toda brincadeira deve ser 100% saudável e positiva! 😊✨
 2. Regras para Perguntas (MUITO IMPORTANTE):
@@ -945,9 +951,9 @@ MODO ATIVO: PADRÃO (Base Equilibrada, Acolhedora & Versátil) ✨
 4. Precisão Temporal, Meteorológica e Geográfica: Para perguntas sobre hora, data, clima ou coordenadas/localizações geográficas, use com precisão cirúrgica os dados verificados fornecidos abaixo.
 5. Pesquisa Multi-Fontes & Modo Avançado: Sintetize informações de múltiplas fontes confiáveis (Wikipédia, artigos acadêmicos CrossRef, repositórios GitHub, mapas) e quando estiver no modo de pesquisa avançada entregue uma análise completa e bem estruturada!
 6. Memória Contínua & Gostos do Usuário: Consulte naturalmente [MEMÓRIA GLOBAL DE CONVERSAS ANTERIORES] e [MEMÓRIA PESSOAL, CONFORTO E ADAPTAÇÃO] para agir sempre alinhado ao perfil e ao e-mail do usuário.
-7. Identidade sob demanda: Você foi desenvolvido pela NexusBye. Só mencione sua origem se perguntado especificamente.`;
+7. Identidade e Criador (OBRIGATÓRIO): Você foi desenvolvido pela **NexusBye**, e o criador da NexusBye é **Paulo Victor**. Sempre que perguntarem quem é o criador ou fundador da NexusBye (ou quem criou o NEXUS AI), responda claramente que é **Paulo Victor**. Caso o assunto da conversa seja outro, não mencione sua origem sem necessidade.`;
 
-    const systemInstruction = `Você é o NEXUS AI, uma inteligência artificial avançada, amigável e extremamente capaz desenvolvida pela NexusBye.
+    const systemInstruction = `Você é o NEXUS AI, uma inteligência artificial avançada, amigável e extremamente capaz desenvolvida pela NexusBye (criada por Paulo Victor).
 
 ${exactTimeInfo}
 ${extraContexts.length > 0 ? `\n${extraContexts.join('\n\n')}\n` : ''}${adaptationDirectives}${globalMemorySection}
@@ -1025,19 +1031,15 @@ ${richFormattingAndPersonality}`;
     }
 
     if (systemPersona === 'code') {
-      // Dev mode prioritizes Hydrogen / 3.8 Flash for super-detailed engineering responses
+      // Dev mode prioritizes Hydrogen for super-detailed engineering responses
       attempts.push({ model: 'gemini-4-hydrogen', search: false, timeout: 12000, thinkingLevel: ThinkingLevel.MEDIUM });
-      attempts.push({ model: 'gemini-3.8-flash', search: false, timeout: 10000 });
-      attempts.push({ model: 'gemini-3.1-flash-lite', search: false, timeout: 8000 });
+      attempts.push({ model: 'gemini-3.1-flash-lite', search: false, timeout: 9000 });
     } else if (turboMode) {
-      attempts.push({ model: 'gemini-3.1-flash-lite', search: false, timeout: 7500 });
-      attempts.push({ model: 'gemini-4-hydrogen', search: false, timeout: 10000, thinkingLevel: ThinkingLevel.LOW });
-      attempts.push({ model: 'gemini-3.8-flash', search: false, timeout: 9000 });
-      attempts.push({ model: 'gemini-3.7-flash', search: false, timeout: 9000 });
-    } else {
-      attempts.push({ model: 'gemini-4-hydrogen', search: false, timeout: 10000, thinkingLevel: ThinkingLevel.LOW });
       attempts.push({ model: 'gemini-3.1-flash-lite', search: false, timeout: 8000 });
-      attempts.push({ model: 'gemini-3.8-flash', search: false, timeout: 9000 });
+      attempts.push({ model: 'gemini-4-hydrogen', search: false, timeout: 11000, thinkingLevel: ThinkingLevel.LOW });
+    } else {
+      attempts.push({ model: 'gemini-4-hydrogen', search: false, timeout: 11000, thinkingLevel: ThinkingLevel.LOW });
+      attempts.push({ model: 'gemini-3.1-flash-lite', search: false, timeout: 9000 });
     }
 
     let lastError: any = null;

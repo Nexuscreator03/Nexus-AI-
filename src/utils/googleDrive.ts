@@ -11,6 +11,7 @@ export const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 
 const provider = new GoogleAuthProvider();
 DRIVE_SCOPES.forEach((scope) => provider.addScope(scope));
+provider.setCustomParameters({ prompt: 'select_account' });
 
 // In-memory token cache ONLY (never stored in localStorage/sessionStorage)
 let cachedAccessToken: string | null = null;
@@ -48,10 +49,22 @@ export const googleDriveSignIn = async (): Promise<{
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('Não foi possível obter o token de acesso do Google Drive.');
+      throw new Error('Não foi possível obter a permissão de leitura do Google Drive.');
     }
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
+  } catch (err: any) {
+    const code = err?.code || '';
+    if (code === 'auth/popup-blocked') {
+      throw new Error('O pop-up do Google foi bloqueado pelo navegador. Libere pop-ups e tente novamente.');
+    }
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new Error('Conexão com o Google Drive cancelada.');
+    }
+    if (code === 'auth/unauthorized-domain') {
+      throw new Error('Domínio não autorizado no Firebase Auth para Google Drive.');
+    }
+    throw err;
   } finally {
     isSigningIn = false;
   }
@@ -63,7 +76,6 @@ export const getCurrentDriveUser = (): User | null => auth.currentUser;
 
 export const driveSignOut = async (): Promise<void> => {
   cachedAccessToken = null;
-  await auth.signOut();
 };
 
 export async function listDriveFiles(searchQuery = ''): Promise<DriveFileItem[]> {
