@@ -164,7 +164,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       startRecording();
       return;
     }
-    cyberAudio.playClick();
+    cyberAudio.playVoice();
     setShowMicPrompt(true);
   };
 
@@ -261,7 +261,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
       recorder.start(250);
       setIsRecording(true);
-      cyberAudio.playClick();
+      cyberAudio.playVoice();
 
       timerRef.current = window.setInterval(() => {
         recordingSecRef.current += 1;
@@ -428,7 +428,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const removeAttachment = (id: string) => {
-    cyberAudio.playClick();
+    cyberAudio.playDelete();
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
@@ -543,7 +543,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <button
               type="button"
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playToggle(!useSearch);
                 onToggleSearch();
               }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-mono transition-all border ${searchToggleClass}`}
@@ -558,7 +558,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  cyberAudio.playClick();
+                  cyberAudio.playToggle(locationStatus !== 'active');
                   onToggleLocation();
                 }}
                 disabled={locationStatus === 'loading'}
@@ -587,7 +587,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <button
               type="button"
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTab();
                 setIsDriveOpen(true);
               }}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-mono transition-all border bg-black/30 text-slate-300 border-white/15 hover:border-cyan-400/60 hover:text-white"
@@ -772,7 +772,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  cyberAudio.playClick();
+                  cyberAudio.playTab();
                   setShowAttachMenu(!showAttachMenu);
                 }}
                 className={`p-2.5 rounded-xl border transition-all ${attachBtnClass}`}

@@ -183,3 +183,36 @@
 .animate-nebula-aura {
   animation: nebulaAura 8s ease-in-out infinite;
 }
+
+@keyframes nexusSpinCw {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nexusSpinCcw {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+.nexus-gear-spin-cw {
+  transform-box: view-box;
+  transform-origin: 64px 64px;
+  animation: nexusSpinCw 10s linear infinite;
+  will-change: transform;
+}
+
+.nexus-gear-spin-ccw {
+  transform-box: view-box;
+  transform-origin: 64px 64px;
+  animation: nexusSpinCcw 16s linear infinite;
+  will-change: transform;
+}
+

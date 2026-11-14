@@ -16,6 +16,8 @@ import {
   ThumbsDown,
   Mic,
   Loader2,
+  Pencil,
+  Scissors,
 } from 'lucide-react';
 import { Message, ThemeMode, Attachment } from '../types/chat';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -30,9 +32,13 @@ let activeStopSpeechFn: (() => void) | null = null;
 interface ChatMessageProps {
   message: Message;
   onRetry?: () => void;
+  onRegenerate?: (messageId: string) => void;
+  onEditMessage?: (messageId: string, newContent: string) => void;
   onFeedback?: (messageId: string, feedback: 'like' | 'dislike' | null) => void;
   onPollVote?: (question: string, option: string) => void;
   isBusy?: boolean;
+  isStreaming?: boolean;
+  textSize?: 'small' | 'medium' | 'large';
   theme?: ThemeMode;
 }
 
@@ -169,20 +175,58 @@ function getAvailableVoices(): Promise<SpeechSynthesisVoice[]> {
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   onRetry,
+  onRegenerate,
+  onEditMessage,
   onFeedback,
   onPollVote,
   isBusy = false,
+  isStreaming = false,
+  textSize = 'medium',
   theme = 'cyber',
 }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
+  const [copiedSelection, setCopiedSelection] = useState(false);
+  const [selectedSnippet, setSelectedSnippet] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isLoadingVoice, setIsLoadingVoice] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(message.content);
   const colors = getThemeColors(theme);
 
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const speechCancelledRef = useRef(false);
+  const contentBoxRef = useRef<HTMLDivElement>(null);
+
+  const checkLocalSelection = () => {
+    if (typeof window === 'undefined' || !contentBoxRef.current) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) {
+      setSelectedSnippet('');
+      return;
+    }
+    const text = sel.toString().trim();
+    if (!text) {
+      setSelectedSnippet('');
+      return;
+    }
+    const anchorInBox = sel.anchorNode && contentBoxRef.current.contains(sel.anchorNode);
+    const focusInBox = sel.focusNode && contentBoxRef.current.contains(sel.focusNode);
+    if (anchorInBox || focusInBox) {
+      setSelectedSnippet(text);
+    } else {
+      setSelectedSnippet('');
+    }
+  };
+
+  useEffect(() => {
+    const handleSelChange = () => {
+      checkLocalSelection();
+    };
+    document.addEventListener('selectionchange', handleSelChange);
+    return () => document.removeEventListener('selectionchange', handleSelChange);
+  }, []);
 
   const stopAllSpeech = () => {
     speechCancelledRef.current = true;
@@ -207,7 +251,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   }, []);
 
   const handleCopy = async () => {
-    cyberAudio.playClick();
+    cyberAudio.playCopy();
     const ok = await copyTextToClipboard(message.content);
     if (ok) {
       setCopied(true);
@@ -215,8 +259,19 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
   };
 
+  const handleCopySelection = async () => {
+    if (!selectedSnippet) return;
+    cyberAudio.playCopy();
+    const ok = await copyTextToClipboard(selectedSnippet);
+    if (ok) {
+      setCopiedSelection(true);
+      setTimeout(() => setCopiedSelection(false), 1800);
+    }
+  };
+
   const handleSpeak = async () => {
     if (isSpeaking || isLoadingVoice) {
+      cyberAudio.playClick();
       stopAllSpeech();
       return;
     }
@@ -228,7 +283,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     activeStopSpeechFn = stopAllSpeech;
     speechCancelledRef.current = false;
     setIsLoadingVoice(true);
-    cyberAudio.playClick();
+    cyberAudio.playVoice();
 
     try {
       let cleanText = cleanSpeechClientFallback(message.content);
@@ -488,24 +543,95 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
         ? 'bg-[#1e093b] border border-purple-400/50 shadow-[0_0_12px_rgba(168,85,247,0.35)] text-purple-300'
         : 'bg-[#091e38] border border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)] text-cyan-300';
 
+    const handleStartEdit = () => {
+      if (isBusy) return;
+      cyberAudio.playClick();
+      setEditDraft(message.content);
+      setIsEditing(true);
+    };
+
+    const handleSaveEdit = () => {
+      const cleaned = editDraft.trim();
+      if (!cleaned && (!message.attachments || message.attachments.length === 0)) return;
+      cyberAudio.playClick();
+      setIsEditing(false);
+      onEditMessage?.(message.id, cleaned);
+    };
+
     return (
       <div className="flex items-start justify-end gap-2.5 sm:gap-3 my-4 group animate-fadeIn w-full min-w-0">
         <div className="flex flex-col items-end max-w-[88%] sm:max-w-xl md:max-w-2xl min-w-0">
           <div className="flex items-center gap-2 mb-1 text-[11px] font-mono text-slate-400">
+            {onEditMessage && !isEditing && (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={handleStartEdit}
+                title="Editar mensagem e reenviar"
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-transparent transition-all ${
+                  isBusy
+                    ? 'opacity-40 cursor-not-allowed'
+                    : 'opacity-75 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 hover:text-cyan-300 hover:bg-white/5 cursor-pointer'
+                }`}
+              >
+                <Pencil className="w-3 h-3" />
+                <span>Editar</span>
+              </button>
+            )}
             <span>VOCÊ</span>
             <span>•</span>
             <span>{formatTime(message.timestamp)}</span>
           </div>
 
           <div
-            className={`p-3.5 sm:p-4 rounded-2xl rounded-tr-sm leading-relaxed text-[13.5px] sm:text-[14.5px] break-words [overflow-wrap:anywhere] max-w-full min-w-0 ${userBubbleClass}`}
+            className={`p-3.5 sm:p-4 rounded-2xl rounded-tr-sm leading-relaxed text-[13.5px] sm:text-[14.5px] break-words [overflow-wrap:anywhere] max-w-full min-w-0 ${userBubbleClass} ${
+              isEditing ? 'w-full sm:min-w-[340px]' : ''
+            }`}
           >
             {renderAttachments(message.attachments)}
 
-            {message.content && (
-              <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                {message.content}
+            {isEditing ? (
+              <div className="space-y-2.5">
+                <textarea
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setIsEditing(false);
+                    } else if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSaveEdit();
+                    }
+                  }}
+                  rows={3}
+                  autoFocus
+                  className="w-full rounded-xl bg-black/40 border border-cyan-400/50 px-3 py-2 text-[13.5px] sm:text-[14px] text-white placeholder-slate-400 focus:outline-none focus:border-cyan-300 resize-y"
+                />
+                <div className="flex items-center justify-end gap-2 text-xs font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(false)}
+                    className="px-2.5 py-1 rounded-lg border border-white/15 bg-black/30 text-slate-300 hover:text-white transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveEdit}
+                    disabled={!editDraft.trim() && (!message.attachments || message.attachments.length === 0)}
+                    className="px-3 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 font-semibold transition-colors"
+                  >
+                    Salvar e Enviar
+                  </button>
+                </div>
               </div>
+            ) : (
+              message.content && (
+                <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                  {message.content}
+                </div>
+              )
             )}
           </div>
         </div>
@@ -595,6 +721,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               <CyberGearLogo size={13} glow={false} theme={theme} />
               NEXUS AI
             </span>
+            {isStreaming && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] bg-cyan-950/70 border border-cyan-500/30 text-cyan-300 animate-pulse">
+                Escrevendo...
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2.5 text-slate-500">
@@ -609,7 +740,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
         </div>
 
         <div
-          className={`relative p-3.5 sm:p-4 rounded-2xl rounded-tl-sm border min-w-0 w-full overflow-hidden ${
+          ref={contentBoxRef}
+          onMouseUp={checkLocalSelection}
+          onTouchEnd={checkLocalSelection}
+          className={`relative p-3.5 sm:p-4 rounded-2xl rounded-tl-sm border min-w-0 w-full overflow-hidden select-text ${
             message.error ? 'border-red-500/50 bg-red-950/10' : aiCardClass
           }`}
         >
@@ -628,13 +762,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                   content={message.content}
                   onPollVote={onPollVote}
                   isBusy={isBusy}
+                  textSize={textSize}
                 />
               </div>
               {onRetry && (
                 <div className="pt-2">
                   <button
                     type="button"
-                    onClick={onRetry}
+                    onClick={() => {
+                      cyberAudio.playTab();
+                      onRetry();
+                    }}
                     className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/40 text-cyan-300 hover:text-cyan-100 text-xs font-mono transition-colors shadow-[0_0_10px_rgba(6,182,212,0.2)]"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
@@ -649,9 +787,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 content={message.content}
                 onPollVote={onPollVote}
                 isBusy={isBusy}
+                isStreaming={isStreaming}
+                textSize={textSize}
               />
 
-              {message.groundingSources && message.groundingSources.length > 0 && (
+              {!isStreaming && message.groundingSources && message.groundingSources.length > 0 && (
                 <GroundingSources
                   sources={message.groundingSources}
                   queries={message.searchQueries}
@@ -660,7 +800,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             </>
           )}
 
-          {!message.error && (
+          {!message.error && !isStreaming && (
             <div
               className={`flex flex-wrap items-center justify-between gap-2 mt-3.5 pt-2.5 border-t ${actionBorderClass} text-xs text-slate-400 font-mono`}
             >
@@ -668,7 +808,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 <button
                   onClick={handleCopy}
                   className={`flex items-center gap-1 px-2.5 py-1 rounded border transition-colors ${actionBtnClass}`}
-                  title="Copiar resposta"
+                  title="Copiar toda a resposta"
                 >
                   {copied ? (
                     <>
@@ -682,6 +822,28 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                     </>
                   )}
                 </button>
+
+                {(selectedSnippet || copiedSelection) && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={handleCopySelection}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded border border-emerald-400/60 bg-emerald-950/60 hover:bg-emerald-900/70 text-emerald-200 transition-colors animate-fadeIn"
+                    title="Copiar apenas as palavras selecionadas"
+                  >
+                    {copiedSelection ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>Trecho copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Scissors className="w-3.5 h-3.5" />
+                        <span>Copiar seleção</span>
+                      </>
+                    )}
+                  </button>
+                )}
 
                 <button
                   onClick={handleSpeak}
@@ -714,12 +876,33 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                   )}
                 </button>
 
+                {onRegenerate && (
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => {
+                      if (isBusy) return;
+                      cyberAudio.playTab();
+                      onRegenerate(message.id);
+                    }}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded border transition-colors ${
+                      isBusy ? 'opacity-40 cursor-not-allowed ' : ''
+                    }${actionBtnClass}`}
+                    title="Gerar outra resposta a partir deste ponto"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Regenerar</span>
+                  </button>
+                )}
+
                 {/* Discrete Likes / Dislikes */}
                 <div className="flex items-center gap-1 border-l pl-2 ml-0.5 border-slate-700/60">
                   <button
                     onClick={() => {
-                      cyberAudio.playClick();
-                      onFeedback?.(message.id, message.feedback === 'like' ? null : 'like');
+                      const next = message.feedback === 'like' ? null : 'like';
+                      if (next === 'like') cyberAudio.playLike();
+                      else cyberAudio.playClick();
+                      onFeedback?.(message.id, next);
                     }}
                     className={`p-1.5 rounded transition-all flex items-center justify-center ${
                       message.feedback === 'like'
@@ -739,8 +922,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
                   <button
                     onClick={() => {
-                      cyberAudio.playClick();
-                      onFeedback?.(message.id, message.feedback === 'dislike' ? null : 'dislike');
+                      const next = message.feedback === 'dislike' ? null : 'dislike';
+                      if (next === 'dislike') cyberAudio.playDislike();
+                      else cyberAudio.playClick();
+                      onFeedback?.(message.id, next);
                     }}
                     className={`p-1.5 rounded transition-all flex items-center justify-center ${
                       message.feedback === 'dislike'

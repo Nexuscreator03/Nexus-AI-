@@ -22,12 +22,14 @@ import {
   Mail,
   MoreHorizontal,
   Download,
+  FileText,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { Conversation, PersonaMode, ThemeMode, Project, UserProfile } from '../types/chat';
 import { cyberAudio } from '../utils/audio';
 import { ThemeSelector } from './ThemeSelector';
 import { CyberGearLogo } from './CyberGearLogo';
+import { PWAInstallButton } from './PWAInstallButton';
 import { getThemeColors } from '../utils/themeStyles';
 import { getPublicNexusUrl } from './Navbar';
 import { copyTextToClipboard } from '../utils/clipboard';
@@ -47,6 +49,7 @@ interface SidebarProps {
   onDeleteProject: (id: string) => void;
   onClearAll: (type?: 'all' | 'archived') => void;
   onExportChat?: () => void;
+  onExportPdf?: () => void;
   hasActiveMessages?: boolean;
   isOpen: boolean;
   onClose: () => void;
@@ -76,6 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteProject,
   onClearAll,
   onExportChat,
+  onExportPdf,
   hasActiveMessages = false,
   isOpen,
   onClose,
@@ -136,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const openNewProjectWizard = () => {
-    cyberAudio.playClick();
+    cyberAudio.playTab();
     setProjectStep(1);
     setSelectedConvIdsForProject([]);
     setNewProjectName('');
@@ -145,14 +149,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const toggleConvForProject = (convId: string) => {
-    cyberAudio.playClick();
+    cyberAudio.playToggle(!selectedConvIdsForProject.includes(convId));
     setSelectedConvIdsForProject((prev) =>
       prev.includes(convId) ? prev.filter((id) => id !== convId) : [...prev, convId]
     );
   };
 
   const handleCopyLink = async () => {
-    cyberAudio.playClick();
+    cyberAudio.playCopy();
     const shareUrl = getPublicNexusUrl();
     const ok = await copyTextToClipboard(shareUrl);
     if (ok) {
@@ -238,7 +242,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div
               className={`relative w-8 h-8 rounded-lg border flex items-center justify-center transition-all duration-300 shrink-0 ${colors.logoBox}`}
             >
-              <CyberGearLogo size={22} spinning glow theme={theme} />
+              <CyberGearLogo size={24} spinning glow theme={theme} />
               <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full animate-ping ${colors.dot}`} />
             </div>
             <div className="min-w-0">
@@ -266,7 +270,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => {
-              cyberAudio.playClick();
+              cyberAudio.playTab();
               if (window.innerWidth < 768) onClose();
               onOpenAccount();
             }}
@@ -301,7 +305,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={() => {
-              cyberAudio.playClick();
+              cyberAudio.playTab();
               onNewConversation();
               if (window.innerWidth < 768) onClose();
             }}
@@ -317,7 +321,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className={`grid grid-cols-4 gap-1 p-1 rounded-xl bg-black/40 border text-[11px] font-mono ${colors.borderSubtle}`}>
             <button
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTab();
                 setActiveTab('all');
                 setSelectedProjectId(null);
                 setAssigningConvId(null);
@@ -335,7 +339,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTab();
                 setActiveTab('favorites');
                 setSelectedProjectId(null);
                 setAssigningConvId(null);
@@ -356,7 +360,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTab();
                 setActiveTab('projects');
                 setAssigningConvId(null);
               }}
@@ -373,7 +377,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTab();
                 setActiveTab('archived');
                 setSelectedProjectId(null);
                 setAssigningConvId(null);
@@ -455,10 +459,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <button
                           onClick={() => {
                             if (isConfirmingDel) {
+                              cyberAudio.playDelete();
                               onDeleteProject(proj.id);
                               setSelectedProjectId(null);
                               setConfirmDeleteProjId(null);
                             } else {
+                              cyberAudio.playClick();
                               setConfirmDeleteProjId(proj.id);
                             }
                           }}
@@ -515,7 +521,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
               {conversations.length > 0 && (
                 <button
-                  onClick={() => setShowClearModal(true)}
+                  onClick={() => {
+                    cyberAudio.playTab();
+                    setShowClearModal(true);
+                  }}
                   className="hover:text-red-400 text-slate-400 transition-colors lowercase font-mono text-[10px] px-1.5 py-0.5 rounded hover:bg-red-950/30 border border-transparent hover:border-red-500/30"
                   title="Opções de limpeza"
                 >
@@ -627,7 +636,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          cyberAudio.playClick();
+                          if (!conv.isFavorite) {
+                            cyberAudio.playLike();
+                          } else {
+                            cyberAudio.playToggle(false);
+                          }
                           onToggleFavorite(conv.id);
                           dismissQuickPanel();
                         }}
@@ -645,7 +658,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          cyberAudio.playClick();
+                          cyberAudio.playTab();
                           onToggleArchive(conv.id);
                           dismissQuickPanel();
                         }}
@@ -663,7 +676,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          cyberAudio.playClick();
+                          cyberAudio.playDelete();
                           onDeleteConversation(conv.id);
                           dismissQuickPanel();
                         }}
@@ -686,7 +699,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          cyberAudio.playClick();
+                          cyberAudio.playTab();
                           dismissQuickPanel();
                           setAssigningConvId(assigningConvId === conv.id ? null : conv.id);
                         }}
@@ -702,7 +715,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                       <button
                         type="button"
-                        onClick={(e) => startRename(conv, e)}
+                        onClick={(e) => {
+                          cyberAudio.playTab();
+                          startRename(conv, e);
+                        }}
                         className="p-1 rounded text-slate-400 hover:text-cyan-300 transition-colors"
                         title="Renomear"
                       >
@@ -713,7 +729,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          cyberAudio.playClick();
+                          cyberAudio.playTab();
                           setAssigningConvId(null);
                           triggerQuickPanel(conv.id);
                         }}
@@ -785,7 +801,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => {
-              cyberAudio.playClick();
+              cyberAudio.playTab();
               if (window.innerWidth < 768) onClose();
               onOpenAccount();
             }}
@@ -848,7 +864,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  cyberAudio.playClick();
+                  cyberAudio.playTab();
                   onExportChat();
                 }}
                 className={`p-2 rounded-lg border text-xs font-mono transition-all ${colors.badgeBg} hover:opacity-90`}
@@ -857,7 +873,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Download className="w-4 h-4" />
               </button>
             )}
+
+            {hasActiveMessages && onExportPdf && (
+              <button
+                type="button"
+                onClick={() => {
+                  cyberAudio.playTab();
+                  onExportPdf();
+                }}
+                className={`p-2 rounded-lg border text-xs font-mono transition-all ${colors.badgeBg} hover:opacity-90`}
+                title="Exportar conversa em PDF"
+              >
+                <FileText className="w-4 h-4" />
+              </button>
+            )}
           </div>
+
+          <PWAInstallButton theme={theme} variant="sidebar" />
 
           {/* Opções de Modo Neural (Padrão, Cyber, Dev, Direto) embaixo do link */}
           <div className="pt-0.5">
@@ -873,7 +905,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={p.id}
                     onClick={() => {
-                      cyberAudio.playClick();
+                      cyberAudio.playToggle(true);
                       onPersonaChange(p.id as PersonaMode);
                     }}
                     className={`py-1 rounded-lg text-[10px] font-mono font-medium transition-all ${
@@ -918,6 +950,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="space-y-2 font-mono text-xs">
               <button
                 onClick={() => {
+                  cyberAudio.playDelete();
                   onClearAll('archived');
                   setShowClearModal(false);
                 }}
@@ -939,6 +972,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <button
                 onClick={() => {
+                  cyberAudio.playDelete();
                   onClearAll('all');
                   setShowClearModal(false);
                 }}
@@ -1062,7 +1096,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      cyberAudio.playClick();
+                      cyberAudio.playTab();
                       setProjectStep(2);
                     }}
                     className="inline-flex items-center gap-1 px-4 py-1.5 rounded-lg bg-gradient-to-r from-sky-600 to-cyan-600 text-white font-semibold text-xs shadow-md hover:from-sky-500 hover:to-cyan-500"

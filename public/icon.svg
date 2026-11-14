@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" shape-rendering="geometricPrecision">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#0a1c3a" />
+      <stop offset="100%" stop-color="#020612" />
+    </radialGradient>
+    <linearGradient id="gearGrad" x1="12%" y1="8%" x2="88%" y2="92%">
+      <stop offset="0%" stop-color="#a5f3fc" />
+      <stop offset="48%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ecfeff" stop-opacity="0.95" />
+      <stop offset="50%" stop-color="#a5f3fc" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.9" />
+    </linearGradient>
+    <radialGradient id="chamberGrad" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#071b36" />
+      <stop offset="75%" stop-color="#020817" />
+      <stop offset="100%" stop-color="#01040c" />
+    </radialGradient>
+    <radialGradient id="coreGrad" cx="42%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#cffafe" />
+      <stop offset="48%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#082f49" />
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bgGrad)" />
+  <rect x="8" y="8" width="496" height="496" rx="108" fill="none" stroke="#22d3ee" stroke-opacity="0.28" stroke-width="4" />
+  <g transform="translate(32, 32) scale(3.5)">
+    <path
+      d="M 52.61,19.95 L 54.68,16.91 L 55.73,6.59 L 58.56,4.25 L 69.44,4.25 L 72.27,6.59 L 73.32,16.91 L 75.39,19.95 L 87.09,24.8 L 90.7,24.11 L 98.74,17.56 L 102.41,17.9 L 110.1,25.59 L 110.44,29.26 L 103.89,37.3 L 103.2,40.91 L 108.05,52.61 L 111.09,54.68 L 121.41,55.73 L 123.75,58.56 L 123.75,69.44 L 121.41,72.27 L 111.09,73.32 L 108.05,75.39 L 103.2,87.09 L 103.89,90.7 L 110.44,98.74 L 110.1,102.41 L 102.41,110.1 L 98.74,110.44 L 90.7,103.89 L 87.09,103.2 L 75.39,108.05 L 73.32,111.09 L 72.27,121.41 L 69.44,123.75 L 58.56,123.75 L 55.73,121.41 L 54.68,111.09 L 52.61,108.05 L 40.91,103.2 L 37.3,103.89 L 29.26,110.44 L 25.59,110.1 L 17.9,102.41 L 17.56,98.74 L 24.11,90.7 L 24.8,87.09 L 19.95,75.39 L 16.91,73.32 L 6.59,72.27 L 4.25,69.44 L 4.25,58.56 L 6.59,55.73 L 16.91,54.68 L 19.95,52.61 L 24.8,40.91 L 24.11,37.3 L 17.56,29.26 L 17.9,25.59 L 25.59,17.9 L 29.26,17.56 L 37.3,24.11 L 40.91,24.8 Z"
+      fill="url(#gearGrad)"
+      stroke="url(#rimGrad)"
+      stroke-width="2.1"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M 64,15.5 L 64,9.5 M 98.29,29.71 L 102.54,25.46 M 112.5,64 L 118.5,64 M 98.29,98.29 L 102.54,102.54 M 64,112.5 L 64,118.5 M 29.71,98.29 L 25.46,102.54 M 15.5,64 L 9.5,64 M 29.71,29.71 L 25.46,25.46"
+      stroke="#083344"
+      stroke-width="2.6"
+      stroke-linecap="round"
+      opacity="0.72"
+    />
+    <circle cx="64" cy="64" r="41.5" fill="none" stroke="#ecfeff" stroke-width="1.25" stroke-opacity="0.45" />
+    <circle cx="64" cy="64" r="35.5" fill="url(#chamberGrad)" stroke="#38bdf8" stroke-width="2" />
+    <path
+      d="M 79.2,48.8 L 89.81,38.19 M 79.2,79.2 L 89.81,89.81 M 48.8,79.2 L 38.19,89.81 M 48.8,48.8 L 38.19,38.19"
+      stroke="#22d3ee"
+      stroke-width="3.2"
+      stroke-linecap="round"
+    />
+    <path
+      d="M 51.59,36.14 A 30.5,30.5 0 0,1 76.41,36.14 M 91.86,51.59 A 30.5,30.5 0 0,1 91.86,76.41 M 76.41,91.86 A 30.5,30.5 0 0,1 51.59,91.86 M 36.14,76.41 A 30.5,30.5 0 0,1 36.14,51.59"
+      fill="none"
+      stroke="#7dd3fc"
+      stroke-width="2.1"
+      stroke-linecap="round"
+    />
+    <path
+      d="M 64,38.5 L 64,29.5 M 89.5,64 L 98.5,64 M 64,89.5 L 64,98.5 M 38.5,64 L 29.5,64"
+      stroke="#ecfeff"
+      stroke-width="2"
+      stroke-linecap="round"
+    />
+    <path
+      d="M 72.8,42.75 L 85.25,55.2 L 85.25,72.8 L 72.8,85.25 L 55.2,85.25 L 42.75,72.8 L 42.75,55.2 L 55.2,42.75 Z"
+      fill="#041024"
+      stroke="#67e8f9"
+      stroke-width="2"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M 71.08,46.91 L 81.09,56.92 L 81.09,71.08 L 71.08,81.09 L 56.92,81.09 L 46.91,71.08 L 46.91,56.92 L 56.92,46.91 Z"
+      fill="none"
+      stroke="#0ea5e9"
+      stroke-width="1.15"
+      stroke-opacity="0.65"
+      stroke-linejoin="round"
+    />
+    <circle cx="64" cy="64" r="12.5" fill="url(#coreGrad)" stroke="#67e8f9" stroke-width="1.5" />
+    <path
+      d="M 64,54.5 L 66.26,61.74 L 73.5,64 L 66.26,66.26 L 64,73.5 L 61.74,66.26 L 54.5,64 L 61.74,61.74 Z"
+      fill="#ffffff"
+      stroke="#a5f3fc"
+      stroke-width="0.9"
+      stroke-linejoin="round"
+    />
+    <circle cx="64" cy="64" r="3.1" fill="#ffffff" />
+  </g>
+</svg>

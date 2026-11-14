@@ -79,6 +79,15 @@ export type PersonaMode = 'standard' | 'cyber' | 'code' | 'concise';
 
 export type ThemeMode = 'simple' | 'cyber' | 'nebula';
 
+export interface ResponseCustomization {
+  tone: 'friendly' | 'professional' | 'creative' | 'didactic';
+  length: 'short' | 'balanced' | 'detailed';
+  format: 'rich' | 'bullets' | 'steps' | 'plain';
+  useEmojis: boolean;
+  fontSize: 'small' | 'medium' | 'large';
+  customInstructions: string;
+}
+
 export interface SystemStatus {
   status: string;
   system: string;

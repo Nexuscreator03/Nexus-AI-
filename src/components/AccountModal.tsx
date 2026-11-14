@@ -11,9 +11,11 @@ import {
   CheckCircle2,
   Loader2,
   User as UserIcon,
+  SlidersHorizontal,
+  RotateCcw,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
-import { ThemeMode, UserProfile } from '../types/chat';
+import { ThemeMode, UserProfile, ResponseCustomization } from '../types/chat';
 import { getThemeColors } from '../utils/themeStyles';
 import { cyberAudio } from '../utils/audio';
 
@@ -27,6 +29,9 @@ interface AccountModalProps {
   onSignOut: () => Promise<void>;
   userProfile: UserProfile;
   onUpdateProfile: (updater: (prev: UserProfile) => UserProfile) => void;
+  responsePrefs: ResponseCustomization;
+  onUpdateResponsePrefs: (updater: (prev: ResponseCustomization) => ResponseCustomization) => void;
+  onResetResponsePrefs: () => void;
   theme: ThemeMode;
 }
 
@@ -40,6 +45,9 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   onSignOut,
   userProfile,
   onUpdateProfile,
+  responsePrefs,
+  onUpdateResponsePrefs,
+  onResetResponsePrefs,
   theme,
 }) => {
   const [newLike, setNewLike] = useState('');
@@ -59,7 +67,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     e.preventDefault();
     const val = newLike.trim();
     if (!val) return;
-    cyberAudio.playClick();
+    cyberAudio.playLike();
     onUpdateProfile((prev) => ({
       ...prev,
       likedTopics: Array.from(new Set([val, ...prev.likedTopics])).slice(0, 30),
@@ -71,7 +79,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     e.preventDefault();
     const val = newDislike.trim();
     if (!val) return;
-    cyberAudio.playClick();
+    cyberAudio.playDislike();
     onUpdateProfile((prev) => ({
       ...prev,
       dislikedTopics: Array.from(new Set([val, ...prev.dislikedTopics])).slice(0, 30),
@@ -387,12 +395,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                   <span className="truncate">{note}</span>
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      cyberAudio.playDelete();
                       onUpdateProfile((prev) => ({
                         ...prev,
                         notes: prev.notes.filter((_, i) => i !== idx),
-                      }))
-                    }
+                      }));
+                    }}
                     className="text-slate-500 hover:text-rose-400 shrink-0"
                     title="Remover memória"
                   >
@@ -402,6 +411,193 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               ))}
             </div>
           )}
+        </div>
+
+        {/* Estilo da IA & Preferências de Texto */}
+        <div className="space-y-2.5 p-3 rounded-xl bg-black/35 border border-white/10 text-[11px] font-mono">
+          <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-white/10">
+            <div className="flex items-center gap-1.5 text-slate-200 font-semibold">
+              <SlidersHorizontal className={`w-3.5 h-3.5 ${colors.accent}`} />
+              <span>Estilo da Resposta & Texto</span>
+            </div>
+            {(responsePrefs.tone !== 'friendly' ||
+              responsePrefs.length !== 'balanced' ||
+              responsePrefs.format !== 'rich' ||
+              !responsePrefs.useEmojis ||
+              responsePrefs.fontSize !== 'medium' ||
+              responsePrefs.customInstructions.trim().length > 0) && (
+              <button
+                type="button"
+                onClick={() => {
+                  cyberAudio.playDelete();
+                  onResetResponsePrefs();
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-white/15 bg-black/40 text-slate-300 hover:text-white text-[10px]"
+                title="Restaurar estilo padrão"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Padrão</span>
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Tom</span>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['friendly', 'Amigável'],
+                    ['professional', 'Profissional'],
+                    ['creative', 'Criativo'],
+                    ['didactic', 'Didático'],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      cyberAudio.playTab();
+                      onUpdateResponsePrefs((p) => ({ ...p, tone: val }));
+                    }}
+                    className={`px-2 py-1 rounded-md border transition-colors ${
+                      responsePrefs.tone === val
+                        ? colors.badgeBg
+                        : 'bg-black/30 text-slate-300 border-white/10 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+                Tamanho da resposta
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['short', 'Curta'],
+                    ['balanced', 'Normal'],
+                    ['detailed', 'Detalhada'],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      cyberAudio.playTab();
+                      onUpdateResponsePrefs((p) => ({ ...p, length: val }));
+                    }}
+                    className={`px-2 py-1 rounded-md border transition-colors ${
+                      responsePrefs.length === val
+                        ? colors.badgeBg
+                        : 'bg-black/30 text-slate-300 border-white/10 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+                Formato
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['rich', 'Livre / Visual'],
+                    ['bullets', 'Tópicos'],
+                    ['steps', 'Passos'],
+                    ['plain', 'Texto corrido'],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      cyberAudio.playTab();
+                      onUpdateResponsePrefs((p) => ({ ...p, format: val }));
+                    }}
+                    className={`px-2 py-1 rounded-md border transition-colors ${
+                      responsePrefs.format === val
+                        ? colors.badgeBg
+                        : 'bg-black/30 text-slate-300 border-white/10 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+                Letra e Emojis
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(
+                  [
+                    ['small', 'A-'],
+                    ['medium', 'A'],
+                    ['large', 'A+'],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      cyberAudio.playClick();
+                      onUpdateResponsePrefs((p) => ({ ...p, fontSize: val }));
+                    }}
+                    className={`px-2.5 py-1 rounded-md border transition-colors ${
+                      responsePrefs.fontSize === val
+                        ? colors.badgeBg
+                        : 'bg-black/30 text-slate-300 border-white/10 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !responsePrefs.useEmojis;
+                    cyberAudio.playToggle(next);
+                    onUpdateResponsePrefs((p) => ({ ...p, useEmojis: next }));
+                  }}
+                  className={`ml-auto px-2.5 py-1 rounded-md border transition-colors ${
+                    responsePrefs.useEmojis
+                      ? colors.badgeBg
+                      : 'bg-black/30 text-slate-400 border-white/10 hover:text-white'
+                  }`}
+                >
+                  Emojis: {responsePrefs.useEmojis ? 'ON' : 'OFF'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+              Regra fixa personalizada (opcional)
+            </span>
+            <input
+              type="text"
+              maxLength={240}
+              value={responsePrefs.customInstructions}
+              onChange={(e) =>
+                onUpdateResponsePrefs((p) => ({ ...p, customInstructions: e.target.value }))
+              }
+              placeholder="Ex: sempre dê exemplos práticos, grife datas em amarelo..."
+              className="w-full rounded-lg bg-black/45 border border-white/15 px-2.5 py-1.5 text-[11px] text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+            />
+          </div>
         </div>
       </div>
     </div>

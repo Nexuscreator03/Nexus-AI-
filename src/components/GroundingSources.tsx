@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Globe, ChevronDown, ChevronUp, ExternalLink, Search, Compass, Newspaper } from 'lucide-react';
 import { GroundingSource } from '../types/chat';
+import { cyberAudio } from '../utils/audio';
 
 interface GroundingSourcesProps {
   sources: GroundingSource[];
@@ -8,7 +9,7 @@ interface GroundingSourcesProps {
 }
 
 export const GroundingSources: React.FC<GroundingSourcesProps> = ({ sources, queries }) => {
-  // Open by default so the user immediately sees all site options!
+  // Open by default showing only the top most important sources
   const [expanded, setExpanded] = useState(true);
 
   if ((!sources || sources.length === 0) && (!queries || queries.length === 0)) {
@@ -25,13 +26,16 @@ export const GroundingSources: React.FC<GroundingSourcesProps> = ({ sources, que
   return (
     <div className="mt-4 pt-3.5 border-t border-cyan-500/25 text-xs">
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          cyberAudio.playTab();
+          setExpanded(!expanded);
+        }}
         className="flex items-center justify-between w-full text-left text-cyan-400 hover:text-cyan-300 py-1 transition-colors group"
       >
         <div className="flex items-center gap-2">
           <Globe className="w-4 h-4 text-cyan-400 group-hover:rotate-45 transition-transform" />
           <span className="font-mono font-semibold tracking-wide text-xs">
-            Sites e Fontes da Pesquisa Web ({uniqueSources.length})
+            Fontes Principais ({uniqueSources.length})
           </span>
           {queries && queries.length > 0 && (
             <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/80 border border-cyan-500/30 text-cyan-300">
@@ -40,7 +44,7 @@ export const GroundingSources: React.FC<GroundingSourcesProps> = ({ sources, que
           )}
         </div>
         <div className="flex items-center gap-1.5 text-cyan-400/80 group-hover:text-cyan-300 font-mono text-[11px]">
-          <span>{expanded ? 'Recolher sites' : 'Expandir todos os sites'}</span>
+          <span>{expanded ? 'Ocultar' : 'Ver fontes'}</span>
           {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </div>
       </button>
@@ -65,7 +69,7 @@ export const GroundingSources: React.FC<GroundingSourcesProps> = ({ sources, que
               </div>
 
               {mainQuery && (
-                <div className="flex items-center gap-1.5 shrink-0 pt-1 sm:pt-0">
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0 pt-1 sm:pt-0">
                   <a
                     href={`https://www.google.com/search?q=${encodeURIComponent(mainQuery)}`}
                     target="_blank"
@@ -73,7 +77,7 @@ export const GroundingSources: React.FC<GroundingSourcesProps> = ({ sources, que
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 hover:text-cyan-100 text-[11px] font-mono transition-all shadow-sm"
                   >
                     <Compass className="w-3 h-3 text-cyan-400" />
-                    <span>Mais no Google</span>
+                    <span>Google</span>
                     <ExternalLink className="w-2.5 h-2.5 opacity-70" />
                   </a>
 
@@ -85,6 +89,36 @@ export const GroundingSources: React.FC<GroundingSourcesProps> = ({ sources, que
                   >
                     <Newspaper className="w-3 h-3 text-cyan-400" />
                     <span>Notícias</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                  </a>
+
+                  <a
+                    href={`https://www.youtube.com/results?search_query=${encodeURIComponent(mainQuery)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 hover:text-cyan-100 text-[11px] font-mono transition-all shadow-sm"
+                  >
+                    <span>YouTube</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                  </a>
+
+                  <a
+                    href={`https://www.reddit.com/search/?q=${encodeURIComponent(mainQuery)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 hover:text-cyan-100 text-[11px] font-mono transition-all shadow-sm"
+                  >
+                    <span>Reddit</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                  </a>
+
+                  <a
+                    href={`https://x.com/search?q=${encodeURIComponent(mainQuery)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 hover:text-cyan-100 text-[11px] font-mono transition-all shadow-sm"
+                  >
+                    <span>X</span>
                     <ExternalLink className="w-2.5 h-2.5 opacity-70" />
                   </a>
                 </div>

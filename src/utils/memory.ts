@@ -219,13 +219,14 @@ export function buildCrossConversationMemory(
   if (otherConvs.length === 0) return '';
 
   const queryKeywords = extractKeywords(currentQuery);
-  const asksAboutPast = /\b(lembra|outra conversa|conversa antiga|falamos|conversamos|disse antes|ontem|semana passada|me conhece|sabe sobre mim|hist[oó]rico|anterior)\b/i.test(
-    currentQuery
-  );
+  const asksAboutPast =
+    /\b(lembr[aeo]|outra conversa|outras conversas|conversa antiga|conversas antigas|conversa passada|conversas passadas|assunto passado|assuntos passados|outro chat|outra vez|outro dia|j[aá] falamos|falamos|conversamos|disse antes|te contei|te falei|eu disse|ontem|semana passada|me conhece|sabe sobre mim|hist[oó]rico|anterior|passado)\b/i.test(
+      currentQuery
+    );
 
   const scoredConvs = otherConvs.map((conv) => {
     let score = 0;
-    const matchedMessages: Array<{ role: string; text: string; time: string; msgScore: number }> = [];
+    const matchedMessages: Array<{ role: string; text: string; time: string; msgScore: number; idx: number }> = [];
 
     const normTitle = normalizeText(conv.title);
     for (const kw of queryKeywords) {
@@ -243,44 +244,46 @@ export function buildCrossConversationMemory(
         }
       }
 
-      if (m.role === 'user') msgScore += 0.5;
-      if (idx >= conv.messages.length - 4) msgScore += 0.3;
+      if (m.role === 'user') msgScore += 0.6;
+      if (idx >= conv.messages.length - 4) msgScore += 0.5;
+      if (idx === 0) msgScore += 0.4;
 
       if (msgScore >= 3 || asksAboutPast) {
         matchedMessages.push({
           role: m.role === 'user' ? 'Usuário' : 'NEXUS',
-          text: m.content.replace(/\s+/g, ' ').slice(0, 260),
+          text: m.content.replace(/\s+/g, ' ').slice(0, asksAboutPast ? 300 : 240),
           time: new Date(m.timestamp).toLocaleString('pt-BR', {
             dateStyle: 'short',
             timeStyle: 'short',
           }),
           msgScore,
+          idx,
         });
       }
       score += msgScore;
     });
 
     const ageHours = (Date.now() - conv.updatedAt) / (1000 * 60 * 60);
-    if (ageHours < 24) score += 2;
-    else if (ageHours < 168) score += 1;
+    if (ageHours < 24) score += 2.5;
+    else if (ageHours < 168) score += 1.2;
 
-    matchedMessages.sort((a, b) => b.msgScore - a.msgScore);
+    matchedMessages.sort((a, b) => b.msgScore - a.msgScore || b.idx - a.idx);
 
     return {
       conv,
       score,
-      matchedMessages: matchedMessages.slice(0, 4),
+      matchedMessages: matchedMessages.slice(0, asksAboutPast ? 4 : 3),
     };
   });
 
   scoredConvs.sort((a, b) => b.score - a.score || b.conv.updatedAt - a.conv.updatedAt);
 
   const lines: string[] = [];
-  let charBudget = 4200;
+  let charBudget = asksAboutPast ? 5400 : 3200;
 
-  const topRelevant = scoredConvs.slice(0, 6);
+  const topRelevant = scoredConvs.slice(0, asksAboutPast ? 8 : 5);
   for (const item of topRelevant) {
-    if (charBudget <= 300) break;
+    if (charBudget <= 280) break;
     const dateStr = new Date(item.conv.updatedAt).toLocaleString('pt-BR', {
       dateStyle: 'short',
       timeStyle: 'short',
@@ -295,11 +298,12 @@ export function buildCrossConversationMemory(
         : item.conv.messages
             .filter((m) => !m.error && m.content)
             .slice(-3)
-            .map((m) => ({
+            .map((m, idx) => ({
               role: m.role === 'user' ? 'Usuário' : 'NEXUS',
               text: m.content.replace(/\s+/g, ' ').slice(0, 220),
               time: '',
               msgScore: 0,
+              idx,
             }));
 
     for (const msg of msgsToShow) {

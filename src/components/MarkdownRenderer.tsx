@@ -10,31 +10,60 @@ import {
   BarChart3,
   Send,
   CheckCircle2,
+  Eye,
+  Code2,
+  Flame,
+  Pin,
 } from 'lucide-react';
 
 import { copyTextToClipboard } from '../utils/clipboard';
+import { cyberAudio } from '../utils/audio';
 
 interface MarkdownRendererProps {
   content: string;
   onPollVote?: (question: string, option: string) => void;
   isBusy?: boolean;
+  isStreaming?: boolean;
+  textSize?: 'small' | 'medium' | 'large';
 }
+
+const TEXT_SIZE_CLASSES: Record<'small' | 'medium' | 'large', string> = {
+  small: 'text-[12.5px] sm:text-[13.5px] leading-normal',
+  medium: 'text-[13.5px] sm:text-[14.5px] leading-relaxed',
+  large: 'text-[15px] sm:text-[16.5px] leading-[1.75]',
+};
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   onPollVote,
   isBusy = false,
+  isStreaming = false,
+  textSize = 'medium',
 }) => {
   if (!content) return null;
 
-  const parts = parseMarkdown(content);
+  const parts = parseMarkdown(content, isStreaming);
+  const sizeClass = TEXT_SIZE_CLASSES[textSize] || TEXT_SIZE_CLASSES.medium;
 
   return (
-    <div className="space-y-2.5 text-slate-200 leading-relaxed text-[13.5px] sm:text-[14.5px] font-normal break-words [overflow-wrap:anywhere] min-w-0 w-full">
+    <div
+      className={`space-y-2.5 text-slate-200 ${sizeClass} font-normal break-words [overflow-wrap:anywhere] min-w-0 w-full`}
+    >
       {parts.map((part, index) => {
         if (part.type === 'code') {
           const lang = (part.language || 'code').toLowerCase();
           if (lang === 'poll' || lang === 'enquete') {
+            if (part.isIncomplete) {
+              return (
+                <div
+                  key={index}
+                  className="my-2 px-3.5 py-2.5 rounded-xl border border-cyan-500/30 bg-[#061224]/80 text-xs font-mono text-cyan-300 flex items-center gap-2"
+                >
+                  <BarChart3 className="w-3.5 h-3.5 text-cyan-400 animate-pulse shrink-0" />
+                  <span>Montando enquete interativa...</span>
+                </div>
+              );
+            }
             return (
               <PollBlock
                 key={index}
@@ -48,6 +77,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         }
         return <FormattedText key={index} text={part.content} />;
       })}
+      {isStreaming && (
+        <span
+          aria-hidden="true"
+          className="inline-block w-2 h-4 ml-1 align-middle rounded-[2px] bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)] animate-pulse"
+        />
+      )}
     </div>
   );
 };
@@ -201,8 +236,13 @@ interface CodeBlockProps {
 
 const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   const [copied, setCopied] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const normalizedLang = language.trim().toLowerCase();
+  const isHtml = normalizedLang === 'html' || normalizedLang === 'htm';
 
   const handleCopy = async () => {
+    cyberAudio.playCopy();
     const ok = await copyTextToClipboard(code);
     if (ok) {
       setCopied(true);
@@ -212,32 +252,70 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
   return (
     <div className="my-3 rounded-xl overflow-hidden border border-cyan-500/30 bg-[#060d1a] shadow-lg shadow-cyan-950/20 w-full max-w-full">
-      <div className="flex items-center justify-between px-3.5 py-2 bg-[#0a1628] border-b border-cyan-500/20 text-xs text-cyan-400 font-mono">
+      <div className="flex items-center justify-between gap-2 px-3.5 py-2 bg-[#0a1628] border-b border-cyan-500/20 text-xs text-cyan-400 font-mono">
         <div className="flex items-center gap-2 min-w-0">
           <Terminal className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
           <span className="uppercase tracking-wider font-semibold truncate">{language}</span>
         </div>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 hover:text-cyan-100 transition-colors border border-cyan-500/20 text-xs shrink-0"
-          title="Copiar código"
-        >
-          {copied ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-emerald-400">Copiado</span>
-            </>
-          ) : (
-            <>
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copiar</span>
-            </>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isHtml && (
+            <button
+              type="button"
+              onClick={() => setShowPreview((v) => !v)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors border text-xs shrink-0 ${
+                showPreview
+                  ? 'bg-sky-500/25 border-sky-400 text-sky-200'
+                  : 'bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 hover:text-cyan-100 border-cyan-500/20'
+              }`}
+              title={showPreview ? 'Voltar para o código HTML' : 'Visualizar HTML em tempo real'}
+            >
+              {showPreview ? (
+                <>
+                  <Code2 className="w-3.5 h-3.5" />
+                  <span>Ver código</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Visualizar</span>
+                </>
+              )}
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 hover:text-cyan-100 transition-colors border border-cyan-500/20 text-xs shrink-0"
+            title="Copiar código"
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-emerald-400">Copiado</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copiar</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      <pre className="p-3.5 text-xs sm:text-[13px] font-mono text-cyan-100/90 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full">
-        <code>{code}</code>
-      </pre>
+      {isHtml && showPreview ? (
+        <div className="w-full bg-white">
+          <iframe
+            srcDoc={code}
+            sandbox="allow-scripts"
+            title="Visualização HTML ao vivo"
+            className="w-full h-80 border-0 block bg-white"
+          />
+        </div>
+      ) : (
+        <pre className="p-3.5 text-xs sm:text-[13px] font-mono text-cyan-100/90 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full">
+          <code>{code}</code>
+        </pre>
+      )}
     </div>
   );
 };
@@ -302,13 +380,13 @@ const FormattedText: React.FC<FormattedTextProps> = ({ text }) => {
           elements.push(
             <div
               key={`table-${idx}`}
-              className="my-3 w-full max-w-full overflow-x-auto rounded-xl border border-cyan-500/30 bg-[#050e1d] shadow-sm"
+              className="my-3.5 w-full max-w-full overflow-x-auto rounded-2xl border border-cyan-500/35 bg-gradient-to-b from-[#061224] to-[#040a16] shadow-[0_0_18px_rgba(6,182,212,0.1)]"
             >
               <table className="w-full table-auto text-left text-xs sm:text-[13px] font-sans border-collapse">
                 <thead>
-                  <tr className="bg-[#091b35] border-b border-cyan-500/30 text-cyan-200 font-semibold font-mono">
+                  <tr className="bg-[#0a1e3b] border-b border-cyan-400/35 text-cyan-200 font-semibold font-mono">
                     {headers.map((h, hIdx) => (
-                      <th key={hIdx} className="px-3 py-2 break-words">
+                      <th key={hIdx} className="px-3.5 py-2.5 break-words tracking-wide">
                         {parseInline(h)}
                       </th>
                     ))}
@@ -318,10 +396,10 @@ const FormattedText: React.FC<FormattedTextProps> = ({ text }) => {
                   {rows.map((row, rIdx) => (
                     <tr
                       key={rIdx}
-                      className="hover:bg-cyan-950/30 transition-colors odd:bg-transparent even:bg-cyan-950/10"
+                      className="hover:bg-cyan-950/35 transition-colors odd:bg-transparent even:bg-cyan-950/15"
                     >
                       {row.map((cell, cIdx) => (
-                        <td key={cIdx} className="px-3 py-2 text-slate-200 break-words">
+                        <td key={cIdx} className="px-3.5 py-2.5 text-slate-200 break-words align-top">
                           {parseInline(cell)}
                         </td>
                       ))}
@@ -379,81 +457,162 @@ const FormattedText: React.FC<FormattedTextProps> = ({ text }) => {
       continue;
     }
 
-    // Callouts & Blockquotes
+    // Multi-line Callouts, Quadros & Blockquotes
     if (trimmed.startsWith('>')) {
-      const quoteContent = trimmed.replace(/^>\s*/, '');
-      const lower = quoteContent.toLowerCase();
+      const quoteLines: string[] = [];
+      let qIdx = idx;
+      while (qIdx < lines.length && lines[qIdx].trim().startsWith('>')) {
+        quoteLines.push(lines[qIdx].trim().replace(/^>\s?/, ''));
+        qIdx++;
+      }
+
+      const firstLine = quoteLines[0] || '';
+      const combinedLower = quoteLines.join('\n').toLowerCase();
+
+      const renderQuoteInner = (linesToRender: string[]) => (
+        <div className="space-y-1.5 min-w-0 flex-1 leading-relaxed break-words">
+          {linesToRender.map((ql, lIdx) => {
+            const cleanQl = ql.trim();
+            if (!cleanQl) return <div key={lIdx} className="h-1" />;
+            if (cleanQl.startsWith('- ') || cleanQl.startsWith('* ')) {
+              return (
+                <div key={lIdx} className="flex items-start gap-2 pl-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80 mt-2 shrink-0" />
+                  <span className="flex-1 min-w-0">{parseInline(cleanQl.slice(2))}</span>
+                </div>
+              );
+            }
+            return <div key={lIdx}>{parseInline(cleanQl)}</div>;
+          })}
+        </div>
+      );
 
       if (
-        lower.startsWith('[!warning]') ||
-        lower.startsWith('[!cuidado]') ||
-        lower.includes('**atenção:**') ||
-        lower.includes('⚠️')
+        combinedLower.startsWith('[!warning]') ||
+        combinedLower.startsWith('[!cuidado]') ||
+        combinedLower.startsWith('[!aviso]') ||
+        combinedLower.startsWith('[!alerta]') ||
+        firstLine.toLowerCase().includes('**atenção:**') ||
+        firstLine.toLowerCase().includes('**aviso:**') ||
+        firstLine.toLowerCase().includes('**alerta:**') ||
+        firstLine.toLowerCase().includes('**cuidado:**') ||
+        firstLine.includes('⚠️') ||
+        firstLine.includes('🚨')
       ) {
-        const cleanText = quoteContent.replace(/^\[!(warning|cuidado)\]\s*/i, '');
+        const cleanedLines = [
+          firstLine.replace(/^\[!(warning|cuidado|aviso|alerta)\]\s*/i, ''),
+          ...quoteLines.slice(1),
+        ];
         elements.push(
           <div
             key={`callout-warn-${idx}`}
-            className="my-2.5 p-3 rounded-xl border border-amber-500/40 bg-amber-950/25 text-amber-200 text-[13px] sm:text-sm shadow-[0_0_15px_rgba(245,158,11,0.12)] flex items-start gap-2.5 min-w-0"
+            className="my-2.5 p-3.5 rounded-xl border border-amber-500/40 border-l-4 border-l-amber-400 bg-gradient-to-br from-amber-950/35 to-[#120b03]/90 text-amber-100 text-[13px] sm:text-sm shadow-[0_0_16px_rgba(245,158,11,0.14)] flex items-start gap-2.5 min-w-0"
           >
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0 leading-relaxed break-words">{parseInline(cleanText)}</div>
+            {renderQuoteInner(cleanedLines)}
           </div>
         );
-        idx++;
+        idx = qIdx;
         continue;
       }
 
       if (
-        lower.startsWith('[!tip]') ||
-        lower.startsWith('[!dica]') ||
-        lower.includes('**dica:**') ||
-        lower.includes('💡')
+        combinedLower.startsWith('[!tip]') ||
+        combinedLower.startsWith('[!dica]') ||
+        firstLine.toLowerCase().includes('**dica:**') ||
+        firstLine.includes('💡')
       ) {
-        const cleanText = quoteContent.replace(/^\[!(tip|dica)\]\s*/i, '');
+        const cleanedLines = [
+          firstLine.replace(/^\[!(tip|dica)\]\s*/i, ''),
+          ...quoteLines.slice(1),
+        ];
         elements.push(
           <div
             key={`callout-tip-${idx}`}
-            className="my-2.5 p-3 rounded-xl border border-emerald-500/40 bg-emerald-950/25 text-emerald-200 text-[13px] sm:text-sm shadow-[0_0_15px_rgba(52,211,153,0.12)] flex items-start gap-2.5 min-w-0"
+            className="my-2.5 p-3.5 rounded-xl border border-emerald-500/40 border-l-4 border-l-emerald-400 bg-gradient-to-br from-emerald-950/35 to-[#03120c]/90 text-emerald-100 text-[13px] sm:text-sm shadow-[0_0_16px_rgba(52,211,153,0.14)] flex items-start gap-2.5 min-w-0"
           >
             <Lightbulb className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0 leading-relaxed break-words">{parseInline(cleanText)}</div>
+            {renderQuoteInner(cleanedLines)}
           </div>
         );
-        idx++;
+        idx = qIdx;
         continue;
       }
 
       if (
-        lower.startsWith('[!important]') ||
-        lower.startsWith('[!destaque]') ||
-        lower.startsWith('[!note]') ||
-        lower.includes('**importante:**') ||
-        lower.includes('**destaque:**')
+        combinedLower.startsWith('[!important]') ||
+        combinedLower.startsWith('[!destaque]') ||
+        combinedLower.startsWith('[!note]') ||
+        combinedLower.startsWith('[!info]') ||
+        combinedLower.startsWith('[!essencial]') ||
+        combinedLower.startsWith('[!resumo]') ||
+        combinedLower.startsWith('[!quadro]') ||
+        firstLine.toLowerCase().includes('**importante:**') ||
+        firstLine.toLowerCase().includes('**informação importante:**') ||
+        firstLine.toLowerCase().includes('**informações importantes:**') ||
+        firstLine.toLowerCase().includes('**nota:**') ||
+        firstLine.toLowerCase().includes('**nota importante:**') ||
+        firstLine.toLowerCase().includes('**lembrete:**') ||
+        firstLine.toLowerCase().includes('**destaque:**') ||
+        firstLine.toLowerCase().includes('**essencial:**') ||
+        firstLine.toLowerCase().includes('**resumo:**') ||
+        firstLine.toLowerCase().includes('**resumo rápido:**') ||
+        firstLine.toLowerCase().includes('**quadro:**') ||
+        firstLine.toLowerCase().includes('**ponto-chave:**') ||
+        firstLine.includes('ℹ️') ||
+        firstLine.includes('📌') ||
+        firstLine.includes('🔥') ||
+        firstLine.includes('📊')
       ) {
-        const cleanText = quoteContent.replace(/^\[!(important|destaque|note)\]\s*/i, '');
+        const isHot =
+          combinedLower.startsWith('[!essencial]') ||
+          firstLine.toLowerCase().includes('**essencial:**') ||
+          firstLine.includes('🔥');
+        const isQuadro =
+          combinedLower.startsWith('[!quadro]') ||
+          combinedLower.startsWith('[!resumo]') ||
+          firstLine.toLowerCase().includes('**resumo') ||
+          firstLine.toLowerCase().includes('**quadro') ||
+          firstLine.includes('📌') ||
+          firstLine.includes('📊');
+        const cleanedLines = [
+          firstLine.replace(/^\[!(important|destaque|note|info|essencial|resumo|quadro)\]\s*/i, ''),
+          ...quoteLines.slice(1),
+        ];
         elements.push(
           <div
             key={`callout-imp-${idx}`}
-            className="my-2.5 p-3 rounded-xl border border-cyan-400/50 bg-cyan-950/30 text-cyan-100 text-[13px] sm:text-sm shadow-[0_0_18px_rgba(6,182,212,0.18)] flex items-start gap-2.5 min-w-0"
+            className={`my-2.5 p-3.5 rounded-xl border border-l-4 text-[13px] sm:text-sm flex items-start gap-2.5 min-w-0 ${
+              isHot
+                ? 'border-fuchsia-400/50 border-l-fuchsia-400 bg-gradient-to-br from-fuchsia-950/35 to-[#120416]/90 text-fuchsia-100 shadow-[0_0_18px_rgba(217,70,239,0.16)]'
+                : isQuadro
+                ? 'border-sky-400/45 border-l-sky-400 bg-gradient-to-br from-sky-950/35 to-[#061224]/90 text-sky-100 shadow-[0_0_18px_rgba(56,189,248,0.14)]'
+                : 'border-cyan-400/50 border-l-cyan-400 bg-gradient-to-br from-cyan-950/40 to-[#041022]/90 text-cyan-100 shadow-[0_0_18px_rgba(6,182,212,0.18)]'
+            }`}
           >
-            <Info className="w-4 h-4 text-cyan-300 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0 leading-relaxed break-words">{parseInline(cleanText)}</div>
+            {isHot ? (
+              <Flame className="w-4 h-4 text-fuchsia-300 shrink-0 mt-0.5" />
+            ) : isQuadro ? (
+              <Pin className="w-4 h-4 text-sky-300 shrink-0 mt-0.5" />
+            ) : (
+              <Info className="w-4 h-4 text-cyan-300 shrink-0 mt-0.5" />
+            )}
+            {renderQuoteInner(cleanedLines)}
           </div>
         );
-        idx++;
+        idx = qIdx;
         continue;
       }
 
       elements.push(
         <blockquote
           key={`quote-${idx}`}
-          className="pl-3.5 py-1.5 border-l-2 border-cyan-400 bg-cyan-950/20 text-cyan-200 italic rounded-r my-2 text-[13px] sm:text-sm leading-relaxed break-words"
+          className="pl-3.5 pr-3 py-2 border-l-2 border-cyan-400 bg-cyan-950/20 text-cyan-100/95 rounded-r-xl my-2.5 text-[13px] sm:text-sm leading-relaxed break-words"
         >
-          {parseInline(quoteContent)}
+          {renderQuoteInner(quoteLines)}
         </blockquote>
       );
-      idx++;
+      idx = qIdx;
       continue;
     }
 
@@ -528,13 +687,106 @@ const FormattedText: React.FC<FormattedTextProps> = ({ text }) => {
   return <div className="space-y-2 min-w-0 w-full">{elements}</div>;
 };
 
+const CopyableCode: React.FC<{ code: string }> = ({ code }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleClick = async (e: React.MouseEvent) => {
+    const sel = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+    if (sel && sel.trim().length > 0) return;
+    e.stopPropagation();
+    const ok = await copyTextToClipboard(code);
+    if (ok) {
+      cyberAudio.playCopy();
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    }
+  };
+
+  return (
+    <code
+      onClick={handleClick}
+      title="Clique para copiar apenas este termo"
+      className={`px-1.5 py-0.5 rounded font-mono text-xs border break-all cursor-pointer transition-colors inline-flex items-center gap-1 align-baseline ${
+        copied
+          ? 'bg-emerald-950/90 text-emerald-200 border-emerald-400/60'
+          : 'bg-cyan-950/90 hover:bg-cyan-900/90 text-cyan-300 border-cyan-500/30 hover:border-cyan-400/60'
+      }`}
+    >
+      <span>{code}</span>
+      {copied && <Check className="w-2.5 h-2.5 text-emerald-400 inline shrink-0" />}
+    </code>
+  );
+};
+
+const HIGHLIGHT_COLOR_CLASSES: Record<string, string> = {
+  amarelo:
+    'bg-yellow-300/18 text-yellow-100 border-b-[2px] border-yellow-300/90 shadow-[0_1px_8px_rgba(253,224,71,0.18)]',
+  amber:
+    'bg-yellow-300/18 text-yellow-100 border-b-[2px] border-yellow-300/90 shadow-[0_1px_8px_rgba(253,224,71,0.18)]',
+  yellow:
+    'bg-yellow-300/18 text-yellow-100 border-b-[2px] border-yellow-300/90 shadow-[0_1px_8px_rgba(253,224,71,0.18)]',
+  verde:
+    'bg-emerald-400/16 text-emerald-100 border-b-[2px] border-emerald-400/85 shadow-[0_1px_8px_rgba(16,185,129,0.18)]',
+  emerald:
+    'bg-emerald-400/16 text-emerald-100 border-b-[2px] border-emerald-400/85 shadow-[0_1px_8px_rgba(16,185,129,0.18)]',
+  roxo:
+    'bg-purple-400/20 text-purple-100 border-b-[2px] border-purple-400/85 shadow-[0_1px_8px_rgba(168,85,247,0.2)]',
+  purple:
+    'bg-purple-400/20 text-purple-100 border-b-[2px] border-purple-400/85 shadow-[0_1px_8px_rgba(168,85,247,0.2)]',
+  rosa:
+    'bg-rose-400/16 text-rose-100 border-b-[2px] border-rose-400/85 shadow-[0_1px_8px_rgba(244,63,94,0.18)]',
+  rose:
+    'bg-rose-400/16 text-rose-100 border-b-[2px] border-rose-400/85 shadow-[0_1px_8px_rgba(244,63,94,0.18)]',
+  azul:
+    'bg-cyan-400/18 text-cyan-100 border-b-[2px] border-cyan-400/85 shadow-[0_1px_8px_rgba(34,211,238,0.2)]',
+  cyan:
+    'bg-cyan-400/18 text-cyan-100 border-b-[2px] border-cyan-400/85 shadow-[0_1px_8px_rgba(34,211,238,0.2)]',
+  laranja:
+    'bg-orange-400/18 text-orange-100 border-b-[2px] border-orange-400/85 shadow-[0_1px_8px_rgba(251,146,60,0.2)]',
+  orange:
+    'bg-orange-400/18 text-orange-100 border-b-[2px] border-orange-400/85 shadow-[0_1px_8px_rgba(251,146,60,0.2)]',
+};
+
+const CopyableMark: React.FC<{ raw: string }> = ({ raw }) => {
+  const [copied, setCopied] = useState(false);
+  const colorMatch = raw.match(/^(amarelo|amber|yellow|verde|emerald|roxo|purple|rosa|rose|azul|cyan|laranja|orange):\s*([\s\S]+)$/i);
+  const colorKey = colorMatch ? colorMatch[1].toLowerCase() : 'cyan';
+  const cleanText = colorMatch ? colorMatch[2] : raw;
+  const colorClass = HIGHLIGHT_COLOR_CLASSES[colorKey] || HIGHLIGHT_COLOR_CLASSES.cyan;
+
+  const handleClick = async (e: React.MouseEvent) => {
+    const sel = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+    if (sel && sel.trim().length > 0) return;
+    e.stopPropagation();
+    const ok = await copyTextToClipboard(cleanText);
+    if (ok) {
+      cyberAudio.playCopy();
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    }
+  };
+
+  return (
+    <mark
+      onClick={handleClick}
+      title="Clique para copiar apenas este destaque"
+      className={`${colorClass} font-semibold px-1.5 py-0.5 rounded mx-0.5 inline cursor-pointer hover:brightness-110 transition-all`}
+    >
+      {cleanText}
+      {copied && (
+        <Check className="w-3 h-3 text-emerald-300 inline ml-1 align-middle" />
+      )}
+    </mark>
+  );
+};
+
 function parseInline(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   let remaining = text;
   let keyIndex = 0;
 
   const pattern =
-    /(`[^`]+`|==[^=]+==|\*\*[^*]+\*\*|~~[^~]+~~|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|\[(DESTAQUE|IMPORTANTE|ATENÇÃO|DICA|NOTA|CRÍTICO|RESULTADO)\])/;
+    /(`[^`]+`|==[^=]+==|\*\*[^*]+\*\*|__[^_]+__|<u>[\s\S]+?<\/u>|~~[^~]+~~|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|\[(DESTAQUE|IMPORTANTE|ATENÇÃO|DICA|NOTA|CRÍTICO|RESULTADO|ESSENCIAL|EXEMPLO|RESUMO)\])/;
 
   while (remaining.length > 0) {
     const match = remaining.match(pattern);
@@ -551,30 +803,34 @@ function parseInline(text: string): React.ReactNode[] {
 
     if (matchedStr.startsWith('`') && matchedStr.endsWith('`')) {
       const code = matchedStr.slice(1, -1);
-      parts.push(
-        <code
-          key={keyIndex++}
-          className="px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-300 font-mono text-xs border border-cyan-500/30 break-all"
-        >
-          {code}
-        </code>
-      );
+      parts.push(<CopyableCode key={keyIndex++} code={code} />);
     } else if (matchedStr.startsWith('==') && matchedStr.endsWith('==')) {
       const highlighted = matchedStr.slice(2, -2);
-      parts.push(
-        <mark
-          key={keyIndex++}
-          className="bg-gradient-to-r from-cyan-500/25 to-sky-500/20 text-cyan-100 font-semibold border-b-2 border-cyan-400 px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(6,182,212,0.3)] mx-0.5 inline"
-        >
-          {highlighted}
-        </mark>
-      );
+      parts.push(<CopyableMark key={keyIndex++} raw={highlighted} />);
     } else if (matchedStr.startsWith('**') && matchedStr.endsWith('**')) {
       const boldText = matchedStr.slice(2, -2);
       parts.push(
-        <strong key={keyIndex++} className="font-bold text-white tracking-wide">
+        <strong
+          key={keyIndex++}
+          className="font-bold text-white tracking-[0.01em] drop-shadow-[0_0_8px_rgba(255,255,255,0.16)]"
+        >
           {boldText}
         </strong>
+      );
+    } else if (
+      (matchedStr.startsWith('__') && matchedStr.endsWith('__')) ||
+      (matchedStr.startsWith('<u>') && matchedStr.endsWith('</u>'))
+    ) {
+      const underlinedText = matchedStr.startsWith('<u>')
+        ? matchedStr.slice(3, -4)
+        : matchedStr.slice(2, -2);
+      parts.push(
+        <span
+          key={keyIndex++}
+          className="underline decoration-2 decoration-cyan-400/80 underline-offset-4 text-white font-medium"
+        >
+          {underlinedText}
+        </span>
       );
     } else if (matchedStr.startsWith('~~') && matchedStr.endsWith('~~')) {
       const strikeText = matchedStr.slice(2, -2);
@@ -595,10 +851,12 @@ function parseInline(text: string): React.ReactNode[] {
       let badgeStyle = 'bg-cyan-950/80 border-cyan-500/40 text-cyan-300';
       if (badgeText.includes('ATENÇÃO') || badgeText.includes('CRÍTICO')) {
         badgeStyle = 'bg-rose-950/80 border-rose-500/40 text-rose-300';
-      } else if (badgeText.includes('DICA')) {
+      } else if (badgeText.includes('DICA') || badgeText.includes('RESULTADO')) {
         badgeStyle = 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300';
       } else if (badgeText.includes('DESTAQUE')) {
         badgeStyle = 'bg-amber-950/80 border-amber-500/40 text-amber-300';
+      } else if (badgeText.includes('ESSENCIAL') || badgeText.includes('EXEMPLO')) {
+        badgeStyle = 'bg-purple-950/80 border-purple-500/40 text-purple-300';
       }
 
       parts.push(
@@ -638,9 +896,15 @@ function parseInline(text: string): React.ReactNode[] {
 }
 
 function parseMarkdown(
-  content: string
-): Array<{ type: 'text' | 'code'; content: string; language?: string }> {
-  const result: Array<{ type: 'text' | 'code'; content: string; language?: string }> = [];
+  content: string,
+  isStreaming = false
+): Array<{ type: 'text' | 'code'; content: string; language?: string; isIncomplete?: boolean }> {
+  const result: Array<{
+    type: 'text' | 'code';
+    content: string;
+    language?: string;
+    isIncomplete?: boolean;
+  }> = [];
   const codeBlockRegex = /```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g;
 
   let lastIndex = 0;
@@ -664,9 +928,27 @@ function parseMarkdown(
   }
 
   if (lastIndex < content.length) {
+    const tail = content.substring(lastIndex);
+    if (isStreaming) {
+      const openFenceMatch = tail.match(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*)$/);
+      if (openFenceMatch && openFenceMatch.index !== undefined) {
+        const beforeFence = tail.substring(0, openFenceMatch.index);
+        if (beforeFence) {
+          result.push({ type: 'text', content: beforeFence });
+        }
+        result.push({
+          type: 'code',
+          language: openFenceMatch[1] || 'code',
+          content: openFenceMatch[2],
+          isIncomplete: true,
+        });
+        return result;
+      }
+    }
+
     result.push({
       type: 'text',
-      content: content.substring(lastIndex),
+      content: tail,
     });
   }
 

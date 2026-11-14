@@ -14,6 +14,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { CyberGearLogo } from './CyberGearLogo';
+import { PWAInstallButton } from './PWAInstallButton';
 import { PersonaMode, ThemeMode } from '../types/chat';
 import { getPublicNexusUrl } from './Navbar';
 import { copyTextToClipboard } from '../utils/clipboard';
@@ -199,8 +200,9 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
             </a>
           </nav>
 
-          {/* Zone 3: 1 primary CTA */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: 1 primary CTA + optional PWA install */}
+          <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton theme={theme} variant="site" compact />
             <button
               type="button"
               onClick={openChatLauncher}

@@ -1,7 +1,17 @@
-import React from 'react';
-import { Sparkles, Globe, ArrowUpRight, ShieldCheck, Zap, CloudSun, Compass } from 'lucide-react';
+import React, { useRef } from 'react';
+import {
+  Sparkles,
+  Globe,
+  ArrowUpRight,
+  ShieldCheck,
+  Zap,
+  CloudSun,
+  Compass,
+  ChevronDown,
+} from 'lucide-react';
 import { ThemeMode } from '../types/chat';
 import { CyberGearLogo } from './CyberGearLogo';
+import { cyberAudio } from '../utils/audio';
 
 interface WelcomeHeroProps {
   onSelectPrompt: (prompt: string, enableSearch?: boolean) => void;
@@ -40,6 +50,7 @@ const STARTER_PROMPTS = [
 ];
 
 export const WelcomeHero: React.FC<WelcomeHeroProps> = ({ onSelectPrompt, theme = 'cyber' }) => {
+  const ideasSectionRef = useRef<HTMLElement>(null);
   const isSimple = theme === 'simple';
   const isNebula = theme === 'nebula';
 
@@ -85,96 +96,130 @@ export const WelcomeHero: React.FC<WelcomeHeroProps> = ({ onSelectPrompt, theme 
     ? 'bg-purple-400 shadow-[0_0_10px_#c084fc]'
     : 'bg-cyan-300 shadow-[0_0_12px_#22d3ee]';
 
+  const hintColor = isSimple
+    ? 'text-slate-400 hover:text-slate-200'
+    : isNebula
+    ? 'text-purple-300/75 hover:text-purple-200'
+    : 'text-cyan-300/75 hover:text-cyan-200';
+
+  const scrollToIdeas = () => {
+    cyberAudio.playTab();
+    ideasSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 max-w-4xl mx-auto text-center animate-fadeIn my-auto">
-      {/* Holographic Cyber Gear Core Emblem */}
-      <div className="relative mb-6">
-        <div
-          className={`w-24 h-24 md:w-28 md:h-28 rounded-full border flex items-center justify-center backdrop-blur-md transition-all duration-300 ${ringClass}`}
-        >
+    <div className="w-full h-full max-w-4xl mx-auto text-center animate-fadeIn">
+      {/* Top fold: occupies 100% of initial visible area so starter cards remain below until user scrolls down */}
+      <section className="min-h-full flex flex-col items-center justify-center px-3 sm:px-6 py-6 relative">
+        {/* Holographic Cyber Gear Core Emblem */}
+        <div className="relative mb-5">
           <div
-            className={`w-16 h-16 md:w-20 md:h-20 rounded-full border flex items-center justify-center transition-all duration-300 ${innerRingClass}`}
+            className={`w-24 h-24 md:w-28 md:h-28 rounded-full border flex items-center justify-center transition-all duration-300 ${ringClass}`}
           >
-            <CyberGearLogo size={48} spinning glow theme={theme} />
+            <div
+              className={`w-16 h-16 md:w-20 md:h-20 rounded-full border flex items-center justify-center transition-all duration-300 ${innerRingClass}`}
+            >
+              <CyberGearLogo size={54} spinning glow theme={theme} />
+            </div>
+          </div>
+
+          <span
+            className={`absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full animate-ping ${dotClass}`}
+          />
+          <span className={`absolute -bottom-1 right-2 w-2 h-2 rounded-full ${dotClass}`} />
+        </div>
+
+        {/* Main Branding Titles */}
+        <div className="space-y-2 mb-5">
+          <h1
+            className={`text-3xl md:text-5xl font-black font-['Chakra_Petch'] tracking-wide text-transparent bg-clip-text ${titleGradient}`}
+          >
+            NEXUS AI
+          </h1>
+
+          <p className="text-sm md:text-base text-slate-300 max-w-lg mx-auto font-normal leading-relaxed">
+            Inteligência artificial avançada com memória global contínua, pesquisa profunda na web, Google Drive e áudio multimodal.
+          </p>
+
+          <div className="pt-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-mono shadow-sm ${badgeClass}`}
+            >
+              Criada pela <strong className={creatorHighlight}>NexusBye</strong>
+            </span>
           </div>
         </div>
 
-        <span
-          className={`absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full animate-ping ${dotClass}`}
-        />
-        <span className={`absolute -bottom-1 right-2 w-2 h-2 rounded-full ${dotClass}`} />
-      </div>
-
-      {/* Main Branding Titles */}
-      <div className="space-y-2 mb-6">
-        <h1
-          className={`text-3xl md:text-5xl font-black font-['Chakra_Petch'] tracking-wide text-transparent bg-clip-text ${titleGradient}`}
-        >
-          NEXUS AI
-        </h1>
-
-        <p className="text-sm md:text-base text-slate-300 max-w-lg mx-auto font-normal leading-relaxed">
-          Inteligência artificial avançada com memória global contínua, pesquisa profunda na web, Google Drive e áudio multimodal.
-        </p>
-
-        <div className="pt-2">
-          <span
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-mono shadow-sm ${badgeClass}`}
-          >
-            Criada pela <strong className={creatorHighlight}>NexusBye</strong>
+        {/* Capability tags */}
+        <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3 text-xs font-mono">
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${badgeClass}`}>
+            <Globe className="w-3.5 h-3.5" />
+            Pesquisa Multi-Sites
+          </span>
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${badgeClass}`}>
+            <Zap className="w-3.5 h-3.5" />
+            Memória Global Ativa
+          </span>
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${badgeClass}`}>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            NexusBye Core
           </span>
         </div>
-      </div>
 
-      {/* Capability tags */}
-      <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3 mb-8 text-xs font-mono">
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${badgeClass}`}>
-          <Globe className="w-3.5 h-3.5" />
-          Pesquisa Multi-Sites
-        </span>
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${badgeClass}`}>
-          <Zap className="w-3.5 h-3.5" />
-          Memória Global Ativa
-        </span>
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${badgeClass}`}>
-          <ShieldCheck className="w-3.5 h-3.5" />
-          NexusBye Core
-        </span>
-      </div>
+        {/* Subtle cue indicating ideas are below when scrolled */}
+        <button
+          type="button"
+          onClick={scrollToIdeas}
+          className={`mt-8 inline-flex flex-col items-center gap-1 text-[11px] font-mono transition-colors cursor-pointer ${hintColor}`}
+        >
+          <span>Arraste para baixo para ver ideias</span>
+          <ChevronDown className="w-4 h-4 animate-bounce" />
+        </button>
+      </section>
 
-      {/* Prompt Starter Cards */}
-      <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
-        {STARTER_PROMPTS.map((item, idx) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={idx}
-              onClick={() => onSelectPrompt(item.prompt, item.enableSearch)}
-              className={`group relative p-4 rounded-xl border transition-all duration-200 text-left flex flex-col justify-between overflow-hidden ${cardClass}`}
-            >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`p-1.5 rounded-lg border ${badgeClass}`}>
-                      <Icon className="w-4 h-4" />
-                    </span>
-                    <span className="font-['Space_Grotesk'] font-bold text-sm tracking-wide">
-                      {item.title}
-                    </span>
+      {/* Below-the-fold Starter Prompt Cards: only visible after scrolling down */}
+      <section ref={ideasSectionRef} className="pt-4 pb-10 px-1 sm:px-2 space-y-4">
+        <div className="flex items-center justify-center gap-2 text-[11px] font-mono uppercase tracking-wider text-slate-400">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Ideias do que podemos fazer</span>
+        </div>
+
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+          {STARTER_PROMPTS.map((item, idx) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={idx}
+                onClick={() => {
+                  cyberAudio.playTab();
+                  onSelectPrompt(item.prompt, item.enableSearch);
+                }}
+                className={`group relative p-4 rounded-xl border transition-all duration-200 text-left flex flex-col justify-between overflow-hidden ${cardClass}`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`p-1.5 rounded-lg border ${badgeClass}`}>
+                        <Icon className="w-4 h-4" />
+                      </span>
+                      <span className="font-['Space_Grotesk'] font-bold text-sm tracking-wide">
+                        {item.title}
+                      </span>
+                    </div>
+                    <ArrowUpRight className="w-4 h-4 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
                   </div>
-                  <ArrowUpRight className="w-4 h-4 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+                  <p className="text-xs opacity-80 line-clamp-2 leading-relaxed">{item.prompt}</p>
                 </div>
-                <p className="text-xs opacity-80 line-clamp-2 leading-relaxed">{item.prompt}</p>
-              </div>
 
-              <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-[10px] font-mono opacity-75">
-                <span>{item.tag}</span>
-                <span className="group-hover:opacity-100">Iniciar →</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-[10px] font-mono opacity-75">
+                  <span>{item.tag}</span>
+                  <span className="group-hover:opacity-100">Iniciar →</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 };

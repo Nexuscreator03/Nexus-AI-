@@ -54,7 +54,7 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
             <button
               key={t.id}
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTheme();
                 onSelectTheme(t.id);
               }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono transition-all ${
@@ -93,7 +93,7 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
             <button
               key={t.id}
               onClick={() => {
-                cyberAudio.playClick();
+                cyberAudio.playTheme();
                 onSelectTheme(t.id);
               }}
               className={`flex flex-col items-center justify-center p-2 rounded-xl border text-center transition-all ${

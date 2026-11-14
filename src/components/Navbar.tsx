@@ -9,10 +9,12 @@ import {
   Share2,
   Check,
   Palette,
+  FileText,
 } from 'lucide-react';
 import { cyberAudio } from '../utils/audio';
 import { copyTextToClipboard } from '../utils/clipboard';
 import { CyberGearLogo } from './CyberGearLogo';
+import { PWAInstallButton } from './PWAInstallButton';
 import { ThemeMode } from '../types/chat';
 import { ThemeSelector } from './ThemeSelector';
 import { getThemeColors } from '../utils/themeStyles';
@@ -21,6 +23,7 @@ interface NavbarProps {
   onOpenSidebar: () => void;
   onNewConversation: () => void;
   onExportChat?: () => void;
+  onExportPdf?: () => void;
   hasActiveMessages: boolean;
   useSearch: boolean;
   onToggleSearch: () => void;
@@ -42,6 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSidebar,
   onNewConversation,
   onExportChat,
+  onExportPdf,
   hasActiveMessages,
   useSearch,
   onToggleSearch,
@@ -57,11 +61,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     const next = !soundOn;
     cyberAudio.setEnabled(next);
     setSoundOn(next);
-    if (next) cyberAudio.playClick();
+    if (next) cyberAudio.playToggle(true);
   };
 
   const handleCopyLink = async () => {
-    cyberAudio.playClick();
+    cyberAudio.playCopy();
     const shareUrl = getPublicNexusUrl();
     const ok = await copyTextToClipboard(shareUrl);
     if (ok) {
@@ -83,7 +87,10 @@ export const Navbar: React.FC<NavbarProps> = ({
     >
       <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
         <button
-          onClick={onOpenSidebar}
+          onClick={() => {
+            cyberAudio.playTab();
+            onOpenSidebar();
+          }}
           className={`md:hidden p-2 rounded-lg text-slate-300 border transition-colors shrink-0 ${colors.borderSubtle} ${colors.hoverBg}`}
           title="Abrir histórico de conversas"
         >
@@ -94,7 +101,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           type="button"
           onClick={() => {
             if (onOpenSite) {
-              cyberAudio.playClick();
+              cyberAudio.playTab();
               onOpenSite();
             }
           }}
@@ -106,7 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div
             className={`relative w-8 h-8 rounded-lg border flex items-center justify-center transition-all duration-300 shrink-0 ${colors.logoBox}`}
           >
-            <CyberGearLogo size={22} glow theme={theme} />
+            <CyberGearLogo size={24} glow theme={theme} />
             <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-ping ${colors.dot}`} />
           </div>
           <div className="min-w-0">
@@ -123,7 +130,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="hidden lg:flex items-center gap-3 text-xs font-mono">
         <button
           onClick={() => {
-            cyberAudio.playClick();
+            cyberAudio.playToggle(!useSearch);
             onToggleSearch();
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all whitespace-nowrap ${
@@ -146,7 +153,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         <button
           onClick={() => {
-            cyberAudio.playClick();
+            cyberAudio.playTheme();
             const nextTheme = theme === 'cyber' ? 'nebula' : theme === 'nebula' ? 'simple' : 'cyber';
             onThemeChange(nextTheme);
           }}
@@ -190,23 +197,40 @@ export const Navbar: React.FC<NavbarProps> = ({
           {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
         </button>
 
+        <PWAInstallButton theme={theme} variant="navbar" compact />
+
         {hasActiveMessages && onExportChat && (
           <button
             onClick={() => {
-              cyberAudio.playClick();
+              cyberAudio.playTab();
               onExportChat();
             }}
             className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono transition-colors ${colors.badgeBg}`}
-            title="Exportar conversa"
+            title="Exportar conversa em Markdown"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Exportar</span>
+            <span>MD</span>
+          </button>
+        )}
+
+        {hasActiveMessages && onExportPdf && (
+          <button
+            type="button"
+            onClick={() => {
+              cyberAudio.playTab();
+              onExportPdf();
+            }}
+            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono transition-colors ${colors.badgeBg}`}
+            title="Exportar conversa em PDF"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>PDF</span>
           </button>
         )}
 
         <button
           onClick={() => {
-            cyberAudio.playClick();
+            cyberAudio.playTab();
             onNewConversation();
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-xs transition-all font-['Space_Grotesk'] whitespace-nowrap ${newBtnClass}`}

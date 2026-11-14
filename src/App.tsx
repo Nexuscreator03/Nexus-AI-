@@ -9,6 +9,8 @@ import { WelcomeHero } from './components/WelcomeHero';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
 import { AccountModal } from './components/AccountModal';
 import { NexusSite } from './components/NexusSite';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { exportConversationToPdf } from './utils/pdfExport';
 import {
   Conversation,
   Message,
@@ -18,6 +20,7 @@ import {
   Project,
   UserProfile,
   ClientLocation,
+  ResponseCustomization,
 } from './types/chat';
 import { cyberAudio } from './utils/audio';
 import {
@@ -50,6 +53,20 @@ const ACTIVE_CONV_KEY = 'nexus_active_conv_v1';
 const THEME_KEY = 'nexus_theme_v1';
 const PROJECTS_KEY = 'nexus_projects_v1';
 const PROFILE_KEY = 'nexus_user_profile_v1';
+const USE_SEARCH_KEY = 'nexus_use_search_v1';
+const LOCATION_ENABLED_KEY = 'nexus_location_enabled_v1';
+const LOCATION_CACHE_KEY = 'nexus_location_cache_v1';
+const PERSONA_KEY = 'nexus_persona_v1';
+const RESPONSE_PREFS_KEY = 'nexus_response_prefs_v1';
+
+const DEFAULT_RESPONSE_PREFS: ResponseCustomization = {
+  tone: 'friendly',
+  length: 'balanced',
+  format: 'rich',
+  useEmojis: true,
+  fontSize: 'medium',
+  customInstructions: '',
+};
 
 pruneStorageToFreeSpace();
 
@@ -147,6 +164,49 @@ function safeParseProfile(raw: string | null): UserProfile {
   }
 }
 
+function safeParseResponsePrefs(raw: string | null): ResponseCustomization {
+  if (!raw) return DEFAULT_RESPONSE_PREFS;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return DEFAULT_RESPONSE_PREFS;
+    }
+    const validTones = new Set(['friendly', 'professional', 'creative', 'didactic']);
+    const validLengths = new Set(['short', 'balanced', 'detailed']);
+    const validFormats = new Set(['rich', 'bullets', 'steps', 'plain']);
+    const validSizes = new Set(['small', 'medium', 'large']);
+    return {
+      tone: validTones.has(parsed.tone) ? parsed.tone : DEFAULT_RESPONSE_PREFS.tone,
+      length: validLengths.has(parsed.length) ? parsed.length : DEFAULT_RESPONSE_PREFS.length,
+      format: validFormats.has(parsed.format) ? parsed.format : DEFAULT_RESPONSE_PREFS.format,
+      useEmojis: typeof parsed.useEmojis === 'boolean' ? parsed.useEmojis : DEFAULT_RESPONSE_PREFS.useEmojis,
+      fontSize: validSizes.has(parsed.fontSize) ? parsed.fontSize : DEFAULT_RESPONSE_PREFS.fontSize,
+      customInstructions:
+        typeof parsed.customInstructions === 'string'
+          ? parsed.customInstructions.slice(0, 240)
+          : '',
+    };
+  } catch {
+    return DEFAULT_RESPONSE_PREFS;
+  }
+}
+
+function safeParseCachedLocation(raw: string | null): ClientLocation | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.lat === 'number' &&
+      typeof parsed.lon === 'number'
+    ) {
+      return parsed as ClientLocation;
+    }
+  } catch {}
+  return null;
+}
+
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>(() =>
     safeParseConversations(safeGetItem(STORAGE_KEY))
@@ -162,6 +222,10 @@ export default function App() {
 
   const [activeId, setActiveId] = useState<string | null>(() => {
     try {
+      const savedProfile = safeParseProfile(safeGetItem(PROFILE_KEY));
+      if (savedProfile.email && savedProfile.email.trim()) {
+        return null;
+      }
       return safeGetItem(ACTIVE_CONV_KEY);
     } catch {
       return null;
@@ -174,9 +238,21 @@ export default function App() {
   const [isAccountOpen, setIsAccountOpen] = useState(false);
 
   const [thinkingConvIds, setThinkingConvIds] = useState<Set<string>>(() => new Set());
+  const [streamingMsgIds, setStreamingMsgIds] = useState<Set<string>>(() => new Set());
   const isThinking = activeId ? thinkingConvIds.has(activeId) : false;
-  const [useSearch, setUseSearch] = useState(false);
-  const [persona, setPersona] = useState<PersonaMode>('standard');
+  const [useSearch, setUseSearch] = useState<boolean>(() => {
+    return safeGetItem(USE_SEARCH_KEY) === 'true';
+  });
+  const [persona, setPersona] = useState<PersonaMode>(() => {
+    const saved = safeGetItem(PERSONA_KEY);
+    if (saved === 'standard' || saved === 'cyber' || saved === 'code' || saved === 'concise') {
+      return saved;
+    }
+    return 'standard';
+  });
+  const [responsePrefs, setResponsePrefs] = useState<ResponseCustomization>(() =>
+    safeParseResponsePrefs(safeGetItem(RESPONSE_PREFS_KEY))
+  );
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       const saved = safeGetItem(THEME_KEY);
@@ -187,9 +263,21 @@ export default function App() {
     return 'cyber';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [clientLocation, setClientLocation] = useState<ClientLocation | null>(null);
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'active' | 'error'>('idle');
+  const [locationEnabled, setLocationEnabled] = useState<boolean>(() => {
+    return safeGetItem(LOCATION_ENABLED_KEY) === 'true';
+  });
+  const [clientLocation, setClientLocation] = useState<ClientLocation | null>(() => {
+    if (safeGetItem(LOCATION_ENABLED_KEY) !== 'true') return null;
+    return safeParseCachedLocation(safeGetItem(LOCATION_CACHE_KEY));
+  });
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'active' | 'error'>(() => {
+    if (safeGetItem(LOCATION_ENABLED_KEY) !== 'true') return 'idle';
+    const cached = safeParseCachedLocation(safeGetItem(LOCATION_CACHE_KEY));
+    return cached ? 'active' : 'loading';
+  });
   const [locationError, setLocationError] = useState<string | null>(null);
+  const locationEnabledRef = useRef(locationEnabled);
+  locationEnabledRef.current = locationEnabled;
 
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const hasRegisteredEmail = Boolean(authUser?.email || (userProfile.email && userProfile.email.trim()));
@@ -230,6 +318,8 @@ export default function App() {
   );
   const pendingScrollToBottomRef = useRef(false);
   const syncViewportRef = useRef<(() => void) | null>(null);
+  const userInteractedWithConvRef = useRef(false);
+  const hasActiveChatContentRef = useRef(false);
 
   useEffect(() => {
     if (hasRegisteredEmail && viewMode !== 'chat') {
@@ -311,7 +401,7 @@ export default function App() {
         const isKeyboardOpen = baselineHeightRef.current - height > 110;
 
         // Track if user was near bottom right as the keyboard shrinks the messages pane
-        if (height < lastHeight - 80) {
+        if (height < lastHeight - 80 && hasActiveChatContentRef.current) {
           const scroller = scrollContainerRef.current;
           if (scroller) {
             const dist = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
@@ -398,9 +488,12 @@ export default function App() {
     if (!pendingScrollToBottomRef.current) return;
     pendingScrollToBottomRef.current = false;
     const scroller = scrollContainerRef.current;
-    if (scroller) {
-      scroller.scrollTop = scroller.scrollHeight;
+    if (!scroller) return;
+    if (!hasActiveChatContentRef.current) {
+      scroller.scrollTop = 0;
+      return;
     }
+    scroller.scrollTop = scroller.scrollHeight;
   }, [viewportBox.height]);
 
   const navigateToView = (nextView: 'site' | 'chat') => {
@@ -432,6 +525,10 @@ export default function App() {
 
       if (syncedUidRef.current === user.uid) return;
       syncedUidRef.current = user.uid;
+
+      if (!userInteractedWithConvRef.current && user.email) {
+        setActiveId(null);
+      }
 
       try {
         const [cloudProfile, cloudConvs, cloudProjs] = await Promise.all([
@@ -513,10 +610,30 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    safeSetItem(USE_SEARCH_KEY, useSearch ? 'true' : 'false');
+  }, [useSearch]);
+
+  useEffect(() => {
+    safeSetItem(PERSONA_KEY, persona);
+  }, [persona]);
+
+  useEffect(() => {
+    safeSetItem(RESPONSE_PREFS_KEY, JSON.stringify(responsePrefs));
+  }, [responsePrefs]);
+
+  useEffect(() => {
+    safeSetItem(LOCATION_ENABLED_KEY, locationEnabled ? 'true' : 'false');
+    if (!locationEnabled) {
+      safeRemoveItem(LOCATION_CACHE_KEY);
+    }
+  }, [locationEnabled]);
+
+  useEffect(() => {
     safeSetItem(PROJECTS_KEY, JSON.stringify(projects));
   }, [projects]);
 
   useEffect(() => {
+    if (streamingMsgIds.size > 0) return;
     try {
       const cleanConvs = conversations.map((c) => ({
         ...c,
@@ -539,7 +656,7 @@ export default function App() {
     } catch (e) {
       console.error('Failed to save conversations:', e);
     }
-  }, [conversations]);
+  }, [conversations, streamingMsgIds]);
 
   useEffect(() => {
     if (activeId) {
@@ -548,6 +665,8 @@ export default function App() {
       safeRemoveItem(ACTIVE_CONV_KEY);
     }
   }, [activeId]);
+
+  const isNearBottomRef = useRef(true);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     const el = scrollContainerRef.current;
@@ -558,26 +677,55 @@ export default function App() {
         el.scrollTo({ top: el.scrollHeight, behavior });
       }
     }
+    isNearBottomRef.current = true;
     setShowScrollBottom(false);
   };
 
   const handleMessagesScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
+    if (!hasActiveChatContentRef.current) {
+      isNearBottomRef.current = false;
+      setShowScrollBottom(false);
+      return;
+    }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 180;
     setShowScrollBottom(distanceFromBottom > 160);
   };
 
   const activeConversation = conversations.find((c) => c.id === activeId) || null;
   const activeMessageCount = activeConversation?.messages.length ?? 0;
+  const activeLastMessage = activeConversation?.messages[activeMessageCount - 1];
+  const activeLastContentLength = activeLastMessage?.content.length ?? 0;
+  const isLastMsgStreaming = Boolean(activeLastMessage && streamingMsgIds.has(activeLastMessage.id));
+  hasActiveChatContentRef.current = activeMessageCount > 0 || isThinking;
 
   useEffect(() => {
     if (activeMessageCount > 0 || isThinking) {
       scrollToBottom('smooth');
     } else {
+      pendingScrollToBottomRef.current = false;
+      isNearBottomRef.current = false;
       setShowScrollBottom(false);
+      const resetTop = () => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = 0;
+        }
+      };
+      resetTop();
+      const rafId = window.requestAnimationFrame(resetTop);
+      return () => window.cancelAnimationFrame(rafId);
     }
   }, [activeId, activeMessageCount, isThinking]);
+
+  useEffect(() => {
+    if (!isLastMsgStreaming || !isNearBottomRef.current) return;
+    const el = scrollContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [activeLastContentLength, isLastMsgStreaming]);
 
   const handleSignInAccount = async () => {
     setIsAuthLoading(true);
@@ -607,114 +755,162 @@ export default function App() {
   };
 
   // Real Location detection: GPS first -> reverse geocode -> automatic GeoIP fallback
-  const handleToggleLocation = async () => {
-    if (clientLocation || locationStatus === 'active') {
-      setClientLocation(null);
-      setLocationStatus('idle');
+  const resolveViaIpFallback = async (): Promise<ClientLocation | null> => {
+    try {
+      const res = await fetch('/api/location/ip');
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (typeof data.lat === 'number' && typeof data.lon === 'number') {
+        return {
+          lat: data.lat,
+          lon: data.lon,
+          city: data.city,
+          state: data.state,
+          country: data.country,
+          label:
+            data.label ||
+            `${data.city || 'Local'}, ${data.state || data.country || ''}`.replace(/,\s*$/, ''),
+          source: 'ip',
+        };
+      }
+    } catch {}
+    return null;
+  };
+
+  const resolveCoordinates = async (
+    lat: number,
+    lon: number,
+    accuracy?: number
+  ): Promise<ClientLocation> => {
+    try {
+      const res = await fetch(`/api/location/reverse?lat=${lat}&lon=${lon}`);
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          lat,
+          lon,
+          accuracy,
+          city: data.city,
+          state: data.state,
+          country: data.country,
+          label: data.label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`,
+          source: 'gps',
+        };
+      }
+    } catch {}
+    return {
+      lat,
+      lon,
+      accuracy,
+      label: `${lat.toFixed(3)}, ${lon.toFixed(3)}`,
+      source: 'gps',
+    };
+  };
+
+  const applyResolvedLocation = (loc: ClientLocation) => {
+    if (!locationEnabledRef.current) return;
+    setClientLocation(loc);
+    setLocationStatus('active');
+    setLocationError(null);
+    safeSetItem(LOCATION_CACHE_KEY, JSON.stringify(loc));
+    if (loc.city) {
+      setUserProfile((prev) => (prev.city === loc.city ? prev : { ...prev, city: loc.city }));
+    }
+  };
+
+  const detectAndStoreLocation = async (silent = false) => {
+    if (!silent) {
+      setLocationStatus('loading');
       setLocationError(null);
-      return;
     }
 
-    setLocationStatus('loading');
-    setLocationError(null);
-
-    const resolveViaIpFallback = async (): Promise<ClientLocation | null> => {
-      try {
-        const res = await fetch('/api/location/ip');
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (typeof data.lat === 'number' && typeof data.lon === 'number') {
-          return {
-            lat: data.lat,
-            lon: data.lon,
-            city: data.city,
-            state: data.state,
-            country: data.country,
-            label:
-              data.label ||
-              `${data.city || 'Local'}, ${data.state || data.country || ''}`.replace(/,\s*$/, ''),
-            source: 'ip',
-          };
-        }
-      } catch {}
-      return null;
+    const fallbackToIp = async () => {
+      const ipLoc = await resolveViaIpFallback();
+      if (!locationEnabledRef.current) return;
+      if (ipLoc) {
+        applyResolvedLocation(ipLoc);
+      } else if (!silent) {
+        setLocationStatus('error');
+        setLocationError(
+          'Não foi possível detectar sua localização automaticamente. Permita o GPS ou informe sua cidade no chat.'
+        );
+      }
     };
 
-    const resolveCoordinates = async (
-      lat: number,
-      lon: number,
-      accuracy?: number
-    ): Promise<ClientLocation> => {
+    // On silent startup restore, avoid triggering an unrequested browser GPS permission prompt
+    let canQueryGps = 'geolocation' in navigator;
+    if (silent && canQueryGps && navigator.permissions?.query) {
       try {
-        const res = await fetch(`/api/location/reverse?lat=${lat}&lon=${lon}`);
-        if (res.ok) {
-          const data = await res.json();
-          return {
-            lat,
-            lon,
-            accuracy,
-            city: data.city,
-            state: data.state,
-            country: data.country,
-            label: data.label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`,
-            source: 'gps',
-          };
+        const perm = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+        if (perm.state !== 'granted') {
+          canQueryGps = false;
         }
-      } catch {}
-      return {
-        lat,
-        lon,
-        accuracy,
-        label: `${lat.toFixed(3)}, ${lon.toFixed(3)}`,
-        source: 'gps',
-      };
-    };
+      } catch {
+        canQueryGps = false;
+      }
+    } else if (silent) {
+      canQueryGps = false;
+    }
 
-    if ('geolocation' in navigator) {
+    if (canQueryGps) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
+          if (!locationEnabledRef.current) return;
           const resolved = await resolveCoordinates(
             Number(pos.coords.latitude.toFixed(5)),
             Number(pos.coords.longitude.toFixed(5)),
             Math.round(pos.coords.accuracy)
           );
-          setClientLocation(resolved);
-          setLocationStatus('active');
-          if (resolved.city) {
-            setUserProfile((prev) => ({ ...prev, city: resolved.city }));
-          }
+          applyResolvedLocation(resolved);
         },
-        async () => {
-          const ipLoc = await resolveViaIpFallback();
-          if (ipLoc) {
-            setClientLocation(ipLoc);
-            setLocationStatus('active');
-            if (ipLoc.city) {
-              setUserProfile((prev) => ({ ...prev, city: ipLoc.city }));
-            }
-          } else {
-            setLocationStatus('error');
-            setLocationError(
-              'Não foi possível detectar sua localização automaticamente. Permita o GPS ou informe sua cidade no chat.'
-            );
-          }
-        },
-        { enableHighAccuracy: true, timeout: 4500 }
+        fallbackToIp,
+        { enableHighAccuracy: !silent, timeout: silent ? 3000 : 4500 }
       );
     } else {
-      const ipLoc = await resolveViaIpFallback();
-      if (ipLoc) {
-        setClientLocation(ipLoc);
-        setLocationStatus('active');
-      } else {
-        setLocationStatus('error');
-        setLocationError('Geolocalização indisponível neste navegador.');
-      }
+      await fallbackToIp();
     }
   };
 
+  // Auto-restore location on mount if user left it active previously
+  useEffect(() => {
+    if (locationEnabled) {
+      detectAndStoreLocation(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleToggleLocation = async () => {
+    if (locationEnabled || clientLocation || locationStatus === 'active' || locationStatus === 'loading') {
+      locationEnabledRef.current = false;
+      setLocationEnabled(false);
+      setClientLocation(null);
+      setLocationStatus('idle');
+      setLocationError(null);
+      safeSetItem(LOCATION_ENABLED_KEY, 'false');
+      safeRemoveItem(LOCATION_CACHE_KEY);
+      return;
+    }
+
+    locationEnabledRef.current = true;
+    setLocationEnabled(true);
+    safeSetItem(LOCATION_ENABLED_KEY, 'true');
+    await detectAndStoreLocation(false);
+  };
+
   const handleNewConversation = () => {
+    userInteractedWithConvRef.current = true;
+    pendingScrollToBottomRef.current = false;
+    isNearBottomRef.current = false;
+    setShowScrollBottom(false);
     setActiveId(null);
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+    window.requestAnimationFrame(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+    });
   };
 
   const handleDeleteConversation = (id: string) => {
@@ -919,6 +1115,11 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportPdf = () => {
+    if (!activeConversation || activeConversation.messages.length === 0) return;
+    exportConversationToPdf(activeConversation);
+  };
+
   const handleSendMessage = async (
     content: string,
     attachments?: Attachment[],
@@ -964,6 +1165,8 @@ export default function App() {
       attachments: hasAttachments ? attachments : undefined,
     };
 
+    userInteractedWithConvRef.current = true;
+
     let targetConvId = effectiveTargetId;
     let currentMessages: Message[] = [];
     let convSnapshot: Conversation | null = null;
@@ -989,16 +1192,21 @@ export default function App() {
       const existingConv = latestConversationsRef.current.find((c) => c.id === targetConvId);
       const baseMessages = retryTarget ? retryTarget.baseMessages : existingConv?.messages || [];
       currentMessages = [...baseMessages, userMsg];
+      if (existingConv) {
+        convSnapshot = {
+          ...existingConv,
+          messages: currentMessages,
+          updatedAt: Date.now(),
+        };
+      }
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== targetConvId) return c;
-          const updated = {
+          return {
             ...c,
             messages: currentMessages,
             updatedAt: Date.now(),
           };
-          convSnapshot = updated;
-          return updated;
         })
       );
     }
@@ -1008,6 +1216,157 @@ export default function App() {
     }
 
     const activeConvKey = targetConvId!;
+    const streamingMsgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    let targetBuffer = '';
+    let revealedLength = 0;
+    let placeholderInserted = false;
+    let revealTimerId: number | null = null;
+    let revealDoneResolver: (() => void) | null = null;
+    let streamFinishedFlag = false;
+
+    const markStreamingActive = (active: boolean) => {
+      setStreamingMsgIds((prev) => {
+        const has = prev.has(streamingMsgId);
+        if (active && has) return prev;
+        if (!active && !has) return prev;
+        const next = new Set(prev);
+        if (active) next.add(streamingMsgId);
+        else next.delete(streamingMsgId);
+        return next;
+      });
+    };
+
+    const upsertStreamingMessage = (textValue: string) => {
+      if (!textValue) return;
+      placeholderInserted = true;
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== activeConvKey) return c;
+          const exists = c.messages.some((m) => m.id === streamingMsgId);
+          const nextMessages = exists
+            ? c.messages.map((m) => (m.id === streamingMsgId ? { ...m, content: textValue } : m))
+            : [
+                ...c.messages,
+                {
+                  id: streamingMsgId,
+                  role: 'model' as const,
+                  content: textValue,
+                  timestamp: Date.now(),
+                },
+              ];
+          return {
+            ...c,
+            messages: nextMessages,
+            updatedAt: Date.now(),
+          };
+        })
+      );
+    };
+
+    const advanceWordBoundary = (text: string, fromIndex: number, wordsCount: number): number => {
+      let idx = fromIndex;
+      const len = text.length;
+      for (let w = 0; w < wordsCount && idx < len; w++) {
+        // Consume any leading whitespace/newlines
+        while (idx < len && /\s/.test(text[idx])) {
+          idx++;
+        }
+        // Consume the next word characters
+        while (idx < len && !/\s/.test(text[idx])) {
+          idx++;
+        }
+        // Include a single trailing space if present so words feel natural
+        if (idx < len && text[idx] === ' ') {
+          idx++;
+        }
+      }
+      return Math.min(idx, len);
+    };
+
+    const stopRevealLoop = () => {
+      if (revealTimerId !== null) {
+        window.clearInterval(revealTimerId);
+        revealTimerId = null;
+      }
+      if (revealDoneResolver) {
+        revealDoneResolver();
+        revealDoneResolver = null;
+      }
+    };
+
+    const ensureRevealLoop = () => {
+      if (revealTimerId !== null) return;
+      markStreamingActive(true);
+      revealTimerId = window.setInterval(() => {
+        if (revealedLength >= targetBuffer.length) {
+          if (streamFinishedFlag) {
+            stopRevealLoop();
+          }
+          return;
+        }
+
+        const backlog = targetBuffer.length - revealedLength;
+        let wordsPerTick = 3;
+        if (streamFinishedFlag) {
+          wordsPerTick = backlog > 180 ? 16 : backlog > 60 ? 10 : 6;
+        } else if (backlog > 180) {
+          wordsPerTick = 12;
+        } else if (backlog > 60) {
+          wordsPerTick = 7;
+        } else if (backlog > 20) {
+          wordsPerTick = 4;
+        }
+
+        const nextLen = advanceWordBoundary(targetBuffer, revealedLength, wordsPerTick);
+        if (nextLen > revealedLength) {
+          revealedLength = nextLen;
+          upsertStreamingMessage(targetBuffer.slice(0, revealedLength));
+        }
+
+        if (streamFinishedFlag && revealedLength >= targetBuffer.length) {
+          stopRevealLoop();
+        }
+      }, 12);
+    };
+
+    const enqueueStreamText = (fullAccumulated: string) => {
+      targetBuffer = fullAccumulated;
+      if (targetBuffer.length > 0) {
+        ensureRevealLoop();
+      }
+    };
+
+    const flushRemainingWords = async (finalFullText: string, signal: AbortSignal) => {
+      targetBuffer = finalFullText;
+      streamFinishedFlag = true;
+      if (!targetBuffer || revealedLength >= targetBuffer.length) {
+        stopRevealLoop();
+        return;
+      }
+      ensureRevealLoop();
+      await new Promise<void>((resolve) => {
+        if (signal.aborted || revealedLength >= targetBuffer.length) {
+          stopRevealLoop();
+          resolve();
+          return;
+        }
+        revealDoneResolver = resolve;
+        const onAbort = () => {
+          stopRevealLoop();
+          resolve();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        // Safety cap so very huge outputs never hold finalization > 200ms
+        window.setTimeout(() => {
+          if (revealTimerId !== null) {
+            revealedLength = targetBuffer.length;
+            upsertStreamingMessage(targetBuffer);
+            stopRevealLoop();
+          }
+        }, 200);
+      });
+    };
+
     setThinkingConvIds((prev) => {
       const next = new Set(prev);
       next.add(activeConvKey);
@@ -1050,47 +1409,184 @@ export default function App() {
         attachments: m.attachments,
       }));
 
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          messages: formattedHistory,
-          useSearch: effectiveSearch,
-          systemPersona: effectivePersona,
-          turboMode: true,
-          clientTime,
-          clientLocation,
-          userProfile: updatedProfile,
-          globalMemoryContext,
-        }),
+      const hasPastConversations = latestConversationsRef.current.some(
+        (c) => c.id !== activeConvKey && c.messages && c.messages.length > 0
+      );
+
+      const requestBody = JSON.stringify({
+        messages: formattedHistory,
+        useSearch: effectiveSearch,
+        systemPersona: effectivePersona,
+        turboMode: true,
+        clientTime,
+        clientLocation,
+        userProfile: updatedProfile,
+        responsePrefs,
+        globalMemoryContext,
+        hasPastConversations,
       });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.details || `Erro do servidor (${res.status})`);
-      }
-
-      const data = await res.json();
-
-      const modelMsg: Message = {
-        id: 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-        role: 'model',
-        content: data.text || 'Nenhuma resposta recebida do núcleo neural.',
-        timestamp: Date.now(),
-        groundingSources: data.groundingSources || [],
-        searchQueries: data.webSearchQueries || [],
-        durationMs: data.durationMs,
+      const fetchFallbackJsonChat = async () => {
+        const jsonRes = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: requestBody,
+        });
+        if (!jsonRes.ok) {
+          const errJson = await jsonRes.json().catch(() => ({}));
+          throw new Error(errJson.error || errJson.details || `Erro do servidor (${jsonRes.status})`);
+        }
+        return jsonRes.json();
       };
 
+      let finalText = '';
+      let finalSources: any[] = [];
+      let finalQueries: string[] = [];
+      let finalDurationMs: number | undefined;
+      let streamAccumulated = '';
+      let needJsonFallback = false;
+      let streamErrorMsg: string | null = null;
+
+      try {
+        const res = await fetch('/api/chat/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: requestBody,
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          streamErrorMsg = errorData.error || errorData.details || `Erro do servidor (${res.status})`;
+          needJsonFallback = true;
+        } else {
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.includes('text/event-stream') || !res.body) {
+            const data = await res.json();
+            finalText = data.text || '';
+            finalSources = data.groundingSources || [];
+            finalQueries = data.webSearchQueries || [];
+            finalDurationMs = data.durationMs;
+            if (!finalText.trim()) {
+              needJsonFallback = true;
+            }
+          } else {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let sseBuffer = '';
+            let finalMeta: any = null;
+
+            const processSseEvent = (rawEvent: string) => {
+              const dataLines = rawEvent
+                .split(/\r?\n/)
+                .filter((l) => l.startsWith('data:'))
+                .map((l) => l.slice(5).trim());
+
+              for (const rawJson of dataLines) {
+                if (!rawJson) continue;
+                try {
+                  const parsed = JSON.parse(rawJson);
+                  if (parsed.type === 'reset') {
+                    streamAccumulated = '';
+                    targetBuffer = '';
+                    revealedLength = 0;
+                    streamErrorMsg = null;
+                  } else if (parsed.type === 'chunk' && typeof parsed.text === 'string' && parsed.text.length > 0) {
+                    streamAccumulated += parsed.text;
+                    enqueueStreamText(streamAccumulated);
+                  } else if (parsed.type === 'done') {
+                    finalMeta = parsed;
+                  } else if (parsed.type === 'error') {
+                    streamErrorMsg = parsed.error || 'Erro ao processar transmissão neural.';
+                  }
+                } catch {}
+              }
+            };
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              sseBuffer += decoder.decode(value, { stream: true });
+              const rawEvents = sseBuffer.split(/\r?\n\r?\n/);
+              sseBuffer = rawEvents.pop() || '';
+              for (const rawEvent of rawEvents) {
+                processSseEvent(rawEvent);
+              }
+            }
+            if (sseBuffer.trim()) {
+              processSseEvent(sseBuffer);
+            }
+
+            if ((streamErrorMsg && !streamAccumulated.trim()) || (!finalMeta?.text?.trim() && !streamAccumulated.trim())) {
+              needJsonFallback = true;
+            } else {
+              finalText = (finalMeta?.text && finalMeta.text.trim()) || streamAccumulated;
+              finalSources = finalMeta?.groundingSources || [];
+              finalQueries = finalMeta?.webSearchQueries || [];
+              finalDurationMs = finalMeta?.durationMs;
+            }
+          }
+        }
+      } catch (streamErr: any) {
+        if (streamErr?.name === 'AbortError') {
+          throw streamErr;
+        }
+        streamErrorMsg = streamErr?.message || null;
+        if (!streamAccumulated.trim()) {
+          needJsonFallback = true;
+        } else {
+          finalText = streamAccumulated;
+        }
+      }
+
+      if (needJsonFallback) {
+        try {
+          const data = await fetchFallbackJsonChat();
+          finalText = data.text || '';
+          finalSources = data.groundingSources || [];
+          finalQueries = data.webSearchQueries || [];
+          finalDurationMs = data.durationMs;
+        } catch (fallbackErr: any) {
+          if (fallbackErr?.name === 'AbortError') throw fallbackErr;
+          throw new Error(fallbackErr?.message || streamErrorMsg || 'Erro temporário de conexão com o NEXUS AI.');
+        }
+      }
+
+      if (!finalText.trim()) {
+        throw new Error(streamErrorMsg || 'Nenhuma resposta recebida do núcleo neural.');
+      }
+
+      // Smoothly flush any remaining buffered words word-by-word before finalizing card
+      await flushRemainingWords(finalText, controller.signal);
+      if (controller.signal.aborted) {
+        throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+      }
+
+      const modelMsg: Message = {
+        id: streamingMsgId,
+        role: 'model',
+        content: finalText,
+        timestamp: Date.now(),
+        groundingSources: finalSources,
+        searchQueries: finalQueries,
+        durationMs: finalDurationMs,
+      };
+
+      markStreamingActive(false);
       cyberAudio.playReceive();
 
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== activeConvKey) return c;
+          const exists = c.messages.some((m) => m.id === streamingMsgId);
+          const nextMessages = exists
+            ? c.messages.map((m) => (m.id === streamingMsgId ? modelMsg : m))
+            : [...c.messages, modelMsg];
           const updated = {
             ...c,
-            messages: [...c.messages, modelMsg],
+            messages: nextMessages,
             updatedAt: Date.now(),
           };
           syncConvToCloud(updated);
@@ -1098,16 +1594,30 @@ export default function App() {
         })
       );
     } catch (err: any) {
+      stopRevealLoop();
+      markStreamingActive(false);
+
       if (err?.name === 'AbortError') {
+        if (placeholderInserted && revealedLength > 0) {
+          const partialText = targetBuffer.slice(0, revealedLength);
+          if (partialText.trim().length > 0) {
+            upsertStreamingMessage(partialText);
+            const targetConv = latestConversationsRef.current.find((c) => c.id === activeConvKey);
+            if (targetConv) {
+              syncConvToCloud(targetConv);
+            }
+          }
+        }
         return;
       }
       console.error('Chat error:', err);
+      cyberAudio.playError();
       const errorMsg: Message = {
-        id: 'msg-err-' + Date.now(),
+        id: placeholderInserted ? streamingMsgId : 'msg-err-' + Date.now(),
         role: 'model',
         content:
           err?.message ||
-          'Não foi possível estabelecer contato com os servidores neurais do NEXUS AI. Verifique sua conexão e chave de API.',
+          'Não foi possível estabelecer contato com os servidores neurais do NEXUS AI. Tente novamente em alguns segundos.',
         timestamp: Date.now(),
         error: true,
       };
@@ -1115,9 +1625,13 @@ export default function App() {
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== activeConvKey) return c;
+          const exists = placeholderInserted && c.messages.some((m) => m.id === streamingMsgId);
+          const nextMessages = exists
+            ? c.messages.map((m) => (m.id === streamingMsgId ? errorMsg : m))
+            : [...c.messages, errorMsg];
           const updated = {
             ...c,
-            messages: [...c.messages, errorMsg],
+            messages: nextMessages,
             updatedAt: Date.now(),
           };
           syncConvToCloud(updated);
@@ -1125,6 +1639,8 @@ export default function App() {
         })
       );
     } finally {
+      stopRevealLoop();
+      markStreamingActive(false);
       if (abortControllersRef.current.get(activeConvKey) === controller) {
         abortControllersRef.current.delete(activeConvKey);
         setThinkingConvIds((prev) => {
@@ -1177,6 +1693,46 @@ export default function App() {
     );
   };
 
+  const handleEditMessage = (messageId: string, newContent: string) => {
+    if (!activeConversation || isThinking) return;
+    const idx = activeConversation.messages.findIndex((m) => m.id === messageId && m.role === 'user');
+    if (idx === -1) return;
+    const targetMsg = activeConversation.messages[idx];
+    const baseMessages = activeConversation.messages.slice(0, idx);
+    handleSendMessage(
+      newContent,
+      targetMsg.attachments,
+      undefined,
+      undefined,
+      false,
+      { convId: activeConversation.id, baseMessages }
+    );
+  };
+
+  const handleRegenerateMessage = (messageId: string) => {
+    if (!activeConversation || isThinking) return;
+    const idx = activeConversation.messages.findIndex((m) => m.id === messageId && m.role === 'model');
+    if (idx === -1) return;
+    let userIdx = -1;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (activeConversation.messages[i].role === 'user') {
+        userIdx = i;
+        break;
+      }
+    }
+    if (userIdx === -1) return;
+    const userMsg = activeConversation.messages[userIdx];
+    const baseMessages = activeConversation.messages.slice(0, userIdx);
+    handleSendMessage(
+      userMsg.content,
+      userMsg.attachments,
+      undefined,
+      undefined,
+      false,
+      { convId: activeConversation.id, baseMessages }
+    );
+  };
+
   const handleEnterChatFromSite = (initialPrompt?: string, selectedPersona?: PersonaMode) => {
     if (selectedPersona) {
       setPersona(selectedPersona);
@@ -1197,6 +1753,7 @@ export default function App() {
 
   const handleSaveEmailFromSite = (email: string) => {
     setUserProfile((prev) => ({ ...prev, email }));
+    setActiveId(null);
     navigateToView('chat');
   };
 
@@ -1205,6 +1762,7 @@ export default function App() {
     setAuthError(null);
     try {
       await signInWithEmailAccount();
+      setActiveId(null);
       navigateToView('chat');
     } catch (err: any) {
       setAuthError(err?.message || 'Não foi possível entrar com sua conta Google.');
@@ -1215,17 +1773,29 @@ export default function App() {
 
   if (viewMode === 'site' && !hasRegisteredEmail) {
     return (
-      <NexusSite
-        theme={theme}
-        onEnterChat={handleEnterChatFromSite}
-        onSaveEmail={handleSaveEmailFromSite}
-        onSignInWithGoogle={handleSignInFromSite}
-        isAuthLoading={isAuthLoading}
-        authError={authError}
-        viewportStyle={viewportStyle}
-      />
+      <>
+        <OfflineIndicator />
+        <NexusSite
+          theme={theme}
+          onEnterChat={handleEnterChatFromSite}
+          onSaveEmail={handleSaveEmailFromSite}
+          onSignInWithGoogle={handleSignInFromSite}
+          isAuthLoading={isAuthLoading}
+          authError={authError}
+          viewportStyle={viewportStyle}
+        />
+      </>
     );
   }
+
+  const lastMessage = activeConversation?.messages[activeConversation.messages.length - 1];
+  const isActivelyStreamingText = Boolean(
+    isThinking &&
+      lastMessage &&
+      lastMessage.role === 'model' &&
+      !lastMessage.error &&
+      (streamingMsgIds.has(lastMessage.id) || lastMessage.content.length > 0)
+  );
 
   return (
     <div
@@ -1239,6 +1809,7 @@ export default function App() {
           : 'theme-cyber'
       }`}
     >
+      <OfflineIndicator />
       {/* Ultra-Futuristic Cyber Holographic Ambience */}
       {theme === 'cyber' && (
         <>
@@ -1269,13 +1840,19 @@ export default function App() {
         onSignOut={handleSignOutAccount}
         userProfile={userProfile}
         onUpdateProfile={(updater) => setUserProfile((prev) => updater(prev))}
+        responsePrefs={responsePrefs}
+        onUpdateResponsePrefs={(updater) => setResponsePrefs((prev) => updater(prev))}
+        onResetResponsePrefs={() => setResponsePrefs(DEFAULT_RESPONSE_PREFS)}
         theme={theme}
       />
 
       <Sidebar
         conversations={conversations}
         activeId={activeId}
-        onSelectConversation={(id) => setActiveId(id)}
+        onSelectConversation={(id) => {
+          userInteractedWithConvRef.current = true;
+          setActiveId(id);
+        }}
         onNewConversation={handleNewConversation}
         onDeleteConversation={handleDeleteConversation}
         onRenameConversation={handleRenameConversation}
@@ -1287,6 +1864,7 @@ export default function App() {
         onDeleteProject={handleDeleteProject}
         onClearAll={handleClearAll}
         onExportChat={handleExportChat}
+        onExportPdf={handleExportPdf}
         hasActiveMessages={Boolean(activeConversation && activeConversation.messages.length > 0)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -1307,6 +1885,7 @@ export default function App() {
           onOpenSidebar={() => setSidebarOpen(true)}
           onNewConversation={handleNewConversation}
           onExportChat={handleExportChat}
+          onExportPdf={handleExportPdf}
           hasActiveMessages={Boolean(activeConversation && activeConversation.messages.length > 0)}
           useSearch={useSearch}
           onToggleSearch={() => setUseSearch(!useSearch)}
@@ -1319,15 +1898,16 @@ export default function App() {
           <div
             ref={scrollContainerRef}
             onScroll={handleMessagesScroll}
-            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 sm:px-6 md:px-8 py-4 space-y-4 scrollbar-thin min-w-0"
+            className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 sm:px-6 md:px-8 scrollbar-thin min-w-0 ${
+              !activeConversation || activeConversation.messages.length === 0
+                ? 'py-0'
+                : 'py-4 space-y-4'
+            }`}
           >
             {!activeConversation || activeConversation.messages.length === 0 ? (
               <WelcomeHero
                 onSelectPrompt={(prompt, enableSearch) => {
-                  if (enableSearch !== undefined) {
-                    setUseSearch(enableSearch);
-                  }
-                  handleSendMessage(prompt, undefined, enableSearch);
+                  handleSendMessage(prompt, undefined, enableSearch ? true : undefined);
                 }}
                 theme={theme}
               />
@@ -1338,14 +1918,20 @@ export default function App() {
                     key={message.id}
                     message={message}
                     onRetry={message.error ? handleRetryLast : undefined}
+                    onRegenerate={!message.error && message.role === 'model' ? handleRegenerateMessage : undefined}
+                    onEditMessage={message.role === 'user' ? handleEditMessage : undefined}
                     onFeedback={handleFeedback}
                     onPollVote={handlePollVote}
                     isBusy={isThinking}
+                    isStreaming={streamingMsgIds.has(message.id)}
+                    textSize={responsePrefs.fontSize}
                     theme={theme}
                   />
                 ))}
 
-                {isThinking && <ThinkingIndicator useSearch={useSearch} theme={theme} />}
+                {isThinking && !isActivelyStreamingText && (
+                  <ThinkingIndicator useSearch={useSearch} theme={theme} />
+                )}
 
                 <div ref={messagesEndRef} className="h-4" />
               </div>
@@ -1355,7 +1941,10 @@ export default function App() {
           {showScrollBottom && activeConversation && activeConversation.messages.length > 0 && (
             <button
               type="button"
-              onClick={() => scrollToBottom('smooth')}
+              onClick={() => {
+                cyberAudio.playTab();
+                scrollToBottom('smooth');
+              }}
               title="Ir para o final da conversa"
               className={`absolute bottom-3 right-4 sm:right-6 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg border backdrop-blur-md transition-all cursor-pointer animate-fadeIn ${
                 theme === 'nebula'
