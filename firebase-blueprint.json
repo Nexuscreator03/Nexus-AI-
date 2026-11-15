@@ -57,6 +57,55 @@
         "totalDislikes": {
           "type": "number"
         },
+        "slangTerms": {
+          "type": "array",
+          "description": "Learned slang and frequent casual expressions used by the user"
+        },
+        "preferredTheme": {
+          "type": "string",
+          "enum": ["simple", "cyber", "nebula"],
+          "maxLength": 20
+        },
+        "preferredPersona": {
+          "type": "string",
+          "enum": ["standard", "cyber", "code", "concise"],
+          "maxLength": 20
+        },
+        "preferredUseSearch": {
+          "type": "boolean"
+        },
+        "voiceName": {
+          "type": "string",
+          "enum": ["Kore", "Zephyr", "Charon", "Fenrir"],
+          "maxLength": 20
+        },
+        "responseTone": {
+          "type": "string",
+          "enum": ["friendly", "professional", "creative", "didactic"],
+          "maxLength": 20
+        },
+        "responseLength": {
+          "type": "string",
+          "enum": ["short", "balanced", "detailed"],
+          "maxLength": 20
+        },
+        "responseFormat": {
+          "type": "string",
+          "enum": ["rich", "bullets", "steps", "plain"],
+          "maxLength": 20
+        },
+        "responseUseEmojis": {
+          "type": "boolean"
+        },
+        "responseFontSize": {
+          "type": "string",
+          "enum": ["small", "medium", "large"],
+          "maxLength": 20
+        },
+        "customInstructions": {
+          "type": "string",
+          "maxLength": 240
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time"
@@ -146,12 +195,54 @@
         }
       },
       "required": ["id", "ownerUid", "name", "color", "createdAt"]
+    },
+    "UserReminder": {
+      "title": "UserReminder",
+      "description": "Synced reminders and tasks created by the user or via NEXUS AI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "dueAt": {
+          "type": "number"
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "sourceConvId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "ownerUid", "title", "completed", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}/private/profile": {
       "schema": { "$ref": "#/entities/UserAccountProfile" },
-      "description": "Private memorized user profile, email, likes, dislikes, and notes."
+      "description": "Private memorized user profile, email, likes, dislikes, slang style, synced customization, and notes."
     },
     "/users/{userId}/conversations/{convId}": {
       "schema": { "$ref": "#/entities/UserConversation" },
@@ -160,6 +251,10 @@
     "/users/{userId}/projects/{projectId}": {
       "schema": { "$ref": "#/entities/UserProject" },
       "description": "Project folders belonging to the authenticated user."
+    },
+    "/users/{userId}/reminders/{reminderId}": {
+      "schema": { "$ref": "#/entities/UserReminder" },
+      "description": "Reminders belonging to the authenticated user."
     }
   }
 }

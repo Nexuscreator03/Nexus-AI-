@@ -62,6 +62,27 @@ export interface UserProfile {
   totalLikes: number;
   totalDislikes: number;
   notes: string[];
+  slangTerms?: string[];
+  slangCounts?: Record<string, number>;
+}
+
+export interface Reminder {
+  id: string;
+  title: string;
+  notes?: string;
+  dueAt?: number | null;
+  completed: boolean;
+  notifiedAt?: number;
+  sourceConvId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CloudAccountSettings {
+  theme?: ThemeMode;
+  persona?: PersonaMode;
+  useSearch?: boolean;
+  responsePrefs?: Partial<ResponseCustomization>;
 }
 
 export interface ClientLocation {
@@ -79,12 +100,64 @@ export type PersonaMode = 'standard' | 'cyber' | 'code' | 'concise';
 
 export type ThemeMode = 'simple' | 'cyber' | 'nebula';
 
+export type AiVoiceId = 'Kore' | 'Zephyr' | 'Charon' | 'Fenrir';
+
+export interface AiVoiceOption {
+  id: AiVoiceId;
+  label: string;
+  gender: 'female' | 'male';
+  genderLabel: string;
+  style: string;
+  fallbackPitch: number;
+  fallbackRate: number;
+}
+
+export const AI_VOICE_OPTIONS: AiVoiceOption[] = [
+  {
+    id: 'Kore',
+    label: 'Clara',
+    gender: 'female',
+    genderLabel: 'Feminina',
+    style: 'Suave & natural',
+    fallbackPitch: 1.06,
+    fallbackRate: 1.03,
+  },
+  {
+    id: 'Zephyr',
+    label: 'Aura',
+    gender: 'female',
+    genderLabel: 'Feminina',
+    style: 'Clara & expressiva',
+    fallbackPitch: 1.15,
+    fallbackRate: 1.06,
+  },
+  {
+    id: 'Charon',
+    label: 'Atlas',
+    gender: 'male',
+    genderLabel: 'Masculina',
+    style: 'Grave & serena',
+    fallbackPitch: 0.84,
+    fallbackRate: 0.99,
+  },
+  {
+    id: 'Fenrir',
+    label: 'Orion',
+    gender: 'male',
+    genderLabel: 'Masculina',
+    style: 'Firme & dinâmica',
+    fallbackPitch: 0.94,
+    fallbackRate: 1.05,
+  },
+];
+
 export interface ResponseCustomization {
   tone: 'friendly' | 'professional' | 'creative' | 'didactic';
   length: 'short' | 'balanced' | 'detailed';
   format: 'rich' | 'bullets' | 'steps' | 'plain';
   useEmojis: boolean;
   fontSize: 'small' | 'medium' | 'large';
+  voiceName?: AiVoiceId;
   customInstructions: string;
 }
 

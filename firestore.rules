@@ -42,7 +42,10 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'uid', 'email', 'name', 'city', 'humorPreference', 'technicalDepth',
           'autonomyDecisiveness', 'likedTopics', 'dislikedTopics',
-          'userVibe', 'totalLikes', 'totalDislikes', 'notes', 'updatedAt'
+          'userVibe', 'totalLikes', 'totalDislikes', 'notes',
+          'slangTerms', 'preferredTheme', 'preferredPersona', 'preferredUseSearch',
+          'voiceName', 'responseTone', 'responseLength', 'responseFormat',
+          'responseUseEmojis', 'responseFontSize', 'customInstructions', 'updatedAt'
         ])
         && data.uid == userId
         && data.uid == request.auth.uid
@@ -56,6 +59,17 @@ service cloud.firestore {
         && isValidStringList(data.likedTopics, 30)
         && isValidStringList(data.dislikedTopics, 30)
         && isValidStringList(data.notes, 50)
+        && (!('slangTerms' in data) || isValidStringList(data.slangTerms, 25))
+        && (!('preferredTheme' in data) || data.preferredTheme in ['simple', 'cyber', 'nebula'])
+        && (!('preferredPersona' in data) || data.preferredPersona in ['standard', 'cyber', 'code', 'concise'])
+        && (!('preferredUseSearch' in data) || data.preferredUseSearch is bool)
+        && (!('voiceName' in data) || data.voiceName in ['Kore', 'Zephyr', 'Charon', 'Fenrir'])
+        && (!('responseTone' in data) || data.responseTone in ['friendly', 'professional', 'creative', 'didactic'])
+        && (!('responseLength' in data) || data.responseLength in ['short', 'balanced', 'detailed'])
+        && (!('responseFormat' in data) || data.responseFormat in ['rich', 'bullets', 'steps', 'plain'])
+        && (!('responseUseEmojis' in data) || data.responseUseEmojis is bool)
+        && (!('responseFontSize' in data) || data.responseFontSize in ['small', 'medium', 'large'])
+        && (!('customInstructions' in data) || (data.customInstructions is string && data.customInstructions.size() <= 240))
         && data.totalLikes is number && data.totalLikes >= 0
         && data.totalDislikes is number && data.totalDislikes >= 0
         && data.updatedAt == request.time;
@@ -92,7 +106,25 @@ service cloud.firestore {
         && data.createdAt is number && data.createdAt >= 0;
     }
 
-    // Private PII & User Memory Profile (isolated per UID)
+    function isValidReminder(data, userId, reminderId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'title', 'completed', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'title', 'notes', 'dueAt', 'completed', 'sourceConvId', 'createdAt', 'updatedAt'
+        ])
+        && data.id == reminderId
+        && isValidId(data.id)
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && (!('dueAt' in data) || data.dueAt == null || (data.dueAt is number && data.dueAt >= 0))
+        && data.completed is bool
+        && (!('sourceConvId' in data) || (data.sourceConvId is string && data.sourceConvId.size() <= 128))
+        && data.createdAt is number && data.createdAt >= 0
+        && data.updatedAt is number && data.updatedAt >= 0;
+    }
+
+    // Private PII, User Memory Profile & Synced Account Preferences (isolated per UID)
     match /users/{userId}/private/profile {
       allow get: if isValidId(userId) && isOwner(userId);
       allow create: if isValidId(userId)
@@ -105,7 +137,10 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'email', 'name', 'city', 'humorPreference', 'technicalDepth',
           'autonomyDecisiveness', 'likedTopics', 'dislikedTopics',
-          'userVibe', 'totalLikes', 'totalDislikes', 'notes', 'updatedAt'
+          'userVibe', 'totalLikes', 'totalDislikes', 'notes',
+          'slangTerms', 'preferredTheme', 'preferredPersona', 'preferredUseSearch',
+          'voiceName', 'responseTone', 'responseLength', 'responseFormat',
+          'responseUseEmojis', 'responseFontSize', 'customInstructions', 'updatedAt'
         ]);
       allow delete: if isValidId(userId) && isOwner(userId);
     }
@@ -152,6 +187,29 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'color']);
       allow delete: if isValidId(userId) && isValidId(projectId) && isOwner(userId);
+    }
+
+    // Synced User Reminders
+    match /users/{userId}/reminders/{reminderId} {
+      allow get: if isValidId(userId) && isValidId(reminderId) && isOwner(userId);
+      allow list: if isValidId(userId)
+        && isOwner(userId)
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isValidId(userId)
+        && isValidId(reminderId)
+        && isOwner(userId)
+        && isValidReminder(incoming(), userId, reminderId);
+      allow update: if isValidId(userId)
+        && isValidId(reminderId)
+        && isOwner(userId)
+        && isValidReminder(incoming(), userId, reminderId)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'notes', 'dueAt', 'completed', 'sourceConvId', 'updatedAt'
+        ]);
+      allow delete: if isValidId(userId) && isValidId(reminderId) && isOwner(userId);
     }
   }
 }

@@ -14,14 +14,21 @@ import {
   Code2,
   Flame,
   Pin,
+  Bell,
+  Clock,
+  Plus,
 } from 'lucide-react';
 
 import { copyTextToClipboard } from '../utils/clipboard';
 import { cyberAudio } from '../utils/audio';
+import { formatReminderDue, parseReminderBlockItems } from '../utils/reminders';
+import { Reminder } from '../types/chat';
 
 interface MarkdownRendererProps {
   content: string;
   onPollVote?: (question: string, option: string) => void;
+  onAddReminder?: (input: { title: string; dueAt?: number | null; notes?: string }) => void;
+  reminders?: Reminder[];
   isBusy?: boolean;
   isStreaming?: boolean;
   textSize?: 'small' | 'medium' | 'large';
@@ -36,6 +43,8 @@ const TEXT_SIZE_CLASSES: Record<'small' | 'medium' | 'large', string> = {
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   onPollVote,
+  onAddReminder,
+  reminders = [],
   isBusy = false,
   isStreaming = false,
   textSize = 'medium',
@@ -70,6 +79,28 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 content={part.content}
                 onVote={onPollVote}
                 isBusy={isBusy}
+              />
+            );
+          }
+          if (lang === 'reminder' || lang === 'lembrete' || lang === 'checklist') {
+            if (part.isIncomplete) {
+              return (
+                <div
+                  key={index}
+                  className="my-2 px-3.5 py-2.5 rounded-xl border border-emerald-500/30 bg-[#051815]/80 text-xs font-mono text-emerald-300 flex items-center gap-2"
+                >
+                  <Bell className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
+                  <span>{lang === 'checklist' ? 'Montando checklist...' : 'Preparando lembrete...'}</span>
+                </div>
+              );
+            }
+            return (
+              <ReminderChecklistBlock
+                key={index}
+                content={part.content}
+                isChecklist={lang === 'checklist'}
+                onAddReminder={onAddReminder}
+                existingReminders={reminders}
               />
             );
           }
@@ -225,6 +256,175 @@ const PollBlock: React.FC<PollBlockProps> = ({ content, onVote, isBusy = false }
           </button>
         </div>
       )}
+    </div>
+  );
+};
+
+interface ReminderChecklistBlockProps {
+  content: string;
+  isChecklist?: boolean;
+  onAddReminder?: (input: { title: string; dueAt?: number | null; notes?: string }) => void;
+  existingReminders?: Reminder[];
+}
+
+const ReminderChecklistBlock: React.FC<ReminderChecklistBlockProps> = ({
+  content,
+  isChecklist = false,
+  onAddReminder,
+  existingReminders = [],
+}) => {
+  const items = parseReminderBlockItems(content);
+  const [checkedMap, setCheckedMap] = useState<Record<number, boolean>>(() => {
+    const init: Record<number, boolean> = {};
+    items.forEach((it, idx) => {
+      if (it.checked) init[idx] = true;
+    });
+    return init;
+  });
+  const [savedIndices, setSavedIndices] = useState<Set<number>>(() => new Set());
+
+  if (items.length === 0) {
+    return (
+      <div className="my-3 p-3.5 rounded-xl border border-emerald-500/30 bg-[#051814] text-sm text-emerald-100">
+        {content}
+      </div>
+    );
+  }
+
+  const isAlreadySaved = (title: string, idx: number) => {
+    if (savedIndices.has(idx)) return true;
+    const norm = title.trim().toLowerCase();
+    return existingReminders.some((r) => !r.completed && r.title.trim().toLowerCase() === norm);
+  };
+
+  const handleSaveItem = (idx: number) => {
+    if (!onAddReminder || isAlreadySaved(items[idx].title, idx)) return;
+    cyberAudio.playLike();
+    const item = items[idx];
+    onAddReminder({ title: item.title, dueAt: item.dueAt, notes: item.notes });
+    setSavedIndices((prev) => {
+      const next = new Set(prev);
+      next.add(idx);
+      return next;
+    });
+  };
+
+  const handleSaveAll = () => {
+    if (!onAddReminder) return;
+    let addedAny = false;
+    const nextSaved = new Set(savedIndices);
+    items.forEach((item, idx) => {
+      if (!isAlreadySaved(item.title, idx)) {
+        onAddReminder({ title: item.title, dueAt: item.dueAt, notes: item.notes });
+        nextSaved.add(idx);
+        addedAny = true;
+      }
+    });
+    if (addedAny) {
+      cyberAudio.playLike();
+      setSavedIndices(nextSaved);
+    }
+  };
+
+  const allSaved = items.every((item, idx) => isAlreadySaved(item.title, idx));
+
+  return (
+    <div className="my-3 rounded-2xl border border-emerald-500/35 bg-gradient-to-br from-[#061b18] to-[#040d14] p-3.5 sm:p-4 shadow-[0_0_18px_rgba(16,185,129,0.12)] w-full max-w-full space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-emerald-300 font-mono text-[11px] uppercase tracking-wider">
+          <Bell className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span>{isChecklist ? 'Checklist Interativo' : 'Lembrete Inteligente'}</span>
+        </div>
+
+        {onAddReminder && (
+          <button
+            type="button"
+            disabled={allSaved}
+            onClick={handleSaveAll}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-mono border transition-all shrink-0 ${
+              allSaved
+                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 cursor-default'
+                : 'bg-emerald-600/30 hover:bg-emerald-500/40 border-emerald-400/50 text-emerald-100 cursor-pointer'
+            }`}
+          >
+            {allSaved ? (
+              <>
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Salvo nos Lembretes</span>
+              </>
+            ) : (
+              <>
+                <Plus className="w-3 h-3" />
+                <span>{items.length > 1 ? 'Salvar todos' : 'Salvar Lembrete'}</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        {items.map((item, idx) => {
+          const isChecked = Boolean(checkedMap[idx]);
+          const saved = isAlreadySaved(item.title, idx);
+          return (
+            <div
+              key={idx}
+              className="flex items-start justify-between gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-[13px]"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  cyberAudio.playToggle(!isChecked);
+                  setCheckedMap((prev) => ({ ...prev, [idx]: !isChecked }));
+                }}
+                className="flex items-start gap-2.5 text-left flex-1 min-w-0 cursor-pointer"
+              >
+                <span
+                  className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                    isChecked
+                      ? 'bg-emerald-500/30 border-emerald-400 text-emerald-300'
+                      : 'bg-black/40 border-emerald-500/40 text-transparent'
+                  }`}
+                >
+                  <Check className="w-3 h-3 stroke-[3]" />
+                </span>
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <span className={`block break-words ${isChecked ? 'line-through text-slate-400' : 'text-slate-100'}`}>
+                    {item.title}
+                  </span>
+                  {item.notes && (
+                    <span className="block text-[11px] font-mono text-slate-400 break-words">
+                      {item.notes}
+                    </span>
+                  )}
+                  {item.dueAt && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-300">
+                      <Clock className="w-2.5 h-2.5" />
+                      <span>{formatReminderDue(item.dueAt)}</span>
+                    </span>
+                  )}
+                </div>
+              </button>
+
+              {onAddReminder && items.length > 1 && (
+                <button
+                  type="button"
+                  disabled={saved}
+                  onClick={() => handleSaveItem(idx)}
+                  className={`px-2 py-0.5 rounded-md border text-[10px] font-mono shrink-0 transition-colors ${
+                    saved
+                      ? 'border-emerald-500/30 bg-emerald-950/40 text-emerald-300'
+                      : 'border-white/15 bg-black/40 hover:border-emerald-400/50 text-slate-300 hover:text-white cursor-pointer'
+                  }`}
+                  title={saved ? 'Já salvo em Lembretes' : 'Salvar este item em Lembretes'}
+                >
+                  {saved ? 'Salvo' : '+ Lembrar'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };

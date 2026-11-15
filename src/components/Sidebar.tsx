@@ -7,7 +7,6 @@ import {
   Search,
   Edit2,
   Check,
-  Share2,
   Star,
   Archive,
   ArchiveRestore,
@@ -23,6 +22,7 @@ import {
   MoreHorizontal,
   Download,
   FileText,
+  Bell,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { Conversation, PersonaMode, ThemeMode, Project, UserProfile } from '../types/chat';
@@ -31,8 +31,6 @@ import { ThemeSelector } from './ThemeSelector';
 import { CyberGearLogo } from './CyberGearLogo';
 import { PWAInstallButton } from './PWAInstallButton';
 import { getThemeColors } from '../utils/themeStyles';
-import { getPublicNexusUrl } from './Navbar';
-import { copyTextToClipboard } from '../utils/clipboard';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -60,6 +58,9 @@ interface SidebarProps {
   userProfile?: UserProfile;
   authUser?: User | null;
   onOpenAccount: () => void;
+  onOpenReminders: () => void;
+  pendingRemindersCount?: number;
+  overdueRemindersCount?: number;
 }
 
 type TabMode = 'all' | 'favorites' | 'projects' | 'archived';
@@ -90,13 +91,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   userProfile,
   authUser,
   onOpenAccount,
+  onOpenReminders,
+  pendingRemindersCount = 0,
+  overdueRemindersCount = 0,
 }) => {
   const [activeTab, setActiveTab] = useState<TabMode>('all');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const [copiedLink, setCopiedLink] = useState(false);
 
   const [quickPanelConvId, setQuickPanelConvId] = useState<string | null>(null);
   const quickPanelTimerRef = useRef<number | null>(null);
@@ -153,16 +156,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setSelectedConvIdsForProject((prev) =>
       prev.includes(convId) ? prev.filter((id) => id !== convId) : [...prev, convId]
     );
-  };
-
-  const handleCopyLink = async () => {
-    cyberAudio.playCopy();
-    const shareUrl = getPublicNexusUrl();
-    const ok = await copyTextToClipboard(shareUrl);
-    if (ok) {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2500);
-    }
   };
 
   const startRename = (conv: Conversation, e: React.MouseEvent) => {
@@ -796,7 +789,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
 
-        {/* Aligned Global Memory + Adaptive Likes/Dislikes Status */}
+        {/* Aligned Global Memory & Adaptive Likes/Dislikes Status */}
         <div className="px-3 pb-1.5 shrink-0">
           <button
             type="button"
@@ -835,29 +828,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* Footer info & Link */}
+        {/* Footer Reminders & Actions */}
         <div className={`p-3 border-t bg-black/50 space-y-2 shrink-0 ${colors.borderSubtle}`}>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleCopyLink}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-xs font-mono transition-all ${
-                copiedLink
-                  ? 'bg-emerald-950/60 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+              onClick={() => {
+                cyberAudio.playTab();
+                if (window.innerWidth < 768) onClose();
+                onOpenReminders();
+              }}
+              className={`flex-1 flex items-center justify-between gap-2 py-2 px-3 rounded-lg border text-xs font-mono transition-all ${
+                overdueRemindersCount > 0
+                  ? 'bg-amber-950/50 border-amber-400/70 text-amber-200 hover:bg-amber-950/70'
                   : `${colors.badgeBg} hover:opacity-90`
               }`}
+              title="Abrir Lembretes & Tarefas"
             >
-              {copiedLink ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="font-semibold">Link Copiado!</span>
-                </>
-              ) : (
-                <>
-                  <Share2 className="w-3.5 h-3.5" />
-                  <span>Copiar Link do NEXUS</span>
-                </>
-              )}
+              <span className="flex items-center gap-2 min-w-0">
+                <Bell className={`w-3.5 h-3.5 shrink-0 ${overdueRemindersCount > 0 ? 'animate-pulse text-amber-300' : ''}`} />
+                <span className="truncate font-semibold">Lembretes</span>
+              </span>
+              <span
+                className={`px-1.5 py-0.5 rounded-md border text-[10px] font-bold tabular-nums shrink-0 ${
+                  overdueRemindersCount > 0
+                    ? 'bg-amber-500/30 border-amber-400/60 text-amber-100'
+                    : pendingRemindersCount > 0
+                    ? 'bg-emerald-950/70 border-emerald-400/50 text-emerald-300'
+                    : 'bg-black/40 border-white/15 text-slate-300'
+                }`}
+              >
+                {pendingRemindersCount}
+              </span>
             </button>
 
             {hasActiveMessages && onExportChat && (

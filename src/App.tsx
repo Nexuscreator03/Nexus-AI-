@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { User } from 'firebase/auth';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, BellRing, Check, X } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { ChatMessage } from './components/ChatMessage';
@@ -8,6 +8,7 @@ import { ChatInput } from './components/ChatInput';
 import { WelcomeHero } from './components/WelcomeHero';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
 import { AccountModal } from './components/AccountModal';
+import { RemindersModal } from './components/RemindersModal';
 import { NexusSite } from './components/NexusSite';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { exportConversationToPdf } from './utils/pdfExport';
@@ -18,6 +19,7 @@ import {
   ThemeMode,
   Attachment,
   Project,
+  Reminder,
   UserProfile,
   ClientLocation,
   ResponseCustomization,
@@ -34,6 +36,7 @@ import {
   buildCrossConversationMemory,
   learnFromFeedback,
 } from './utils/memory';
+import { formatReminderDue, parseReminderBlockItems } from './utils/reminders';
 import {
   subscribeToAuth,
   signInWithEmailAccount,
@@ -46,6 +49,9 @@ import {
   loadCloudProjects,
   saveCloudProject,
   deleteCloudProject,
+  loadCloudReminders,
+  saveCloudReminder,
+  deleteCloudReminder,
 } from './firebase';
 
 const STORAGE_KEY = 'nexus_conversations_v1';
@@ -58,6 +64,7 @@ const LOCATION_ENABLED_KEY = 'nexus_location_enabled_v1';
 const LOCATION_CACHE_KEY = 'nexus_location_cache_v1';
 const PERSONA_KEY = 'nexus_persona_v1';
 const RESPONSE_PREFS_KEY = 'nexus_response_prefs_v1';
+const REMINDERS_KEY = 'nexus_reminders_v1';
 
 const DEFAULT_RESPONSE_PREFS: ResponseCustomization = {
   tone: 'friendly',
@@ -65,6 +72,7 @@ const DEFAULT_RESPONSE_PREFS: ResponseCustomization = {
   format: 'rich',
   useEmojis: true,
   fontSize: 'medium',
+  voiceName: 'Kore',
   customInstructions: '',
 };
 
@@ -86,6 +94,8 @@ const DEFAULT_PROFILE: UserProfile = {
   totalLikes: 0,
   totalDislikes: 0,
   notes: [],
+  slangTerms: [],
+  slangCounts: {},
 };
 
 function mergeStringArrays(a: string[] = [], b: string[] = [], limit = 30): string[] {
@@ -155,12 +165,37 @@ function safeParseProfile(raw: string | null): UserProfile {
       likedTopics: Array.isArray(parsed.likedTopics) ? parsed.likedTopics : DEFAULT_PROFILE.likedTopics,
       dislikedTopics: Array.isArray(parsed.dislikedTopics) ? parsed.dislikedTopics : [],
       notes: Array.isArray(parsed.notes) ? parsed.notes : [],
+      slangTerms: Array.isArray(parsed.slangTerms) ? parsed.slangTerms : [],
+      slangCounts:
+        parsed.slangCounts && typeof parsed.slangCounts === 'object' && !Array.isArray(parsed.slangCounts)
+          ? parsed.slangCounts
+          : {},
       totalLikes: typeof parsed.totalLikes === 'number' ? parsed.totalLikes : 0,
       totalDislikes: typeof parsed.totalDislikes === 'number' ? parsed.totalDislikes : 0,
     };
   } catch (e) {
     console.error('Failed to parse profile:', e);
     return DEFAULT_PROFILE;
+  }
+}
+
+function safeParseReminders(raw: string | null): Reminder[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is Reminder => Boolean(r && typeof r === 'object' && typeof r.id === 'string' && typeof r.title === 'string'))
+      .map((r) => ({
+        ...r,
+        title: r.title.trim().slice(0, 200),
+        completed: Boolean(r.completed),
+        dueAt: typeof r.dueAt === 'number' ? r.dueAt : null,
+        createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
+        updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : Date.now(),
+      }));
+  } catch {
+    return [];
   }
 }
 
@@ -175,12 +210,14 @@ function safeParseResponsePrefs(raw: string | null): ResponseCustomization {
     const validLengths = new Set(['short', 'balanced', 'detailed']);
     const validFormats = new Set(['rich', 'bullets', 'steps', 'plain']);
     const validSizes = new Set(['small', 'medium', 'large']);
+    const validVoices = new Set(['Kore', 'Zephyr', 'Charon', 'Fenrir']);
     return {
       tone: validTones.has(parsed.tone) ? parsed.tone : DEFAULT_RESPONSE_PREFS.tone,
       length: validLengths.has(parsed.length) ? parsed.length : DEFAULT_RESPONSE_PREFS.length,
       format: validFormats.has(parsed.format) ? parsed.format : DEFAULT_RESPONSE_PREFS.format,
       useEmojis: typeof parsed.useEmojis === 'boolean' ? parsed.useEmojis : DEFAULT_RESPONSE_PREFS.useEmojis,
       fontSize: validSizes.has(parsed.fontSize) ? parsed.fontSize : DEFAULT_RESPONSE_PREFS.fontSize,
+      voiceName: validVoices.has(parsed.voiceName) ? parsed.voiceName : DEFAULT_RESPONSE_PREFS.voiceName,
       customInstructions:
         typeof parsed.customInstructions === 'string'
           ? parsed.customInstructions.slice(0, 240)
@@ -236,6 +273,9 @@ export default function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [reminders, setReminders] = useState<Reminder[]>(() => safeParseReminders(safeGetItem(REMINDERS_KEY)));
+  const [isRemindersOpen, setIsRemindersOpen] = useState(false);
+  const [dueBannerReminders, setDueBannerReminders] = useState<Reminder[]>([]);
 
   const [thinkingConvIds, setThinkingConvIds] = useState<Set<string>>(() => new Set());
   const [streamingMsgIds, setStreamingMsgIds] = useState<Set<string>>(() => new Set());
@@ -281,6 +321,7 @@ export default function App() {
 
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const hasRegisteredEmail = Boolean(authUser?.email || (userProfile.email && userProfile.email.trim()));
+  const [allowSiteWhenSignedIn, setAllowSiteWhenSignedIn] = useState(false);
   const [viewMode, setViewMode] = useState<'site' | 'chat'>(() => {
     const savedProfile = safeParseProfile(safeGetItem(PROFILE_KEY));
     if (savedProfile.email && savedProfile.email.trim()) {
@@ -322,17 +363,17 @@ export default function App() {
   const hasActiveChatContentRef = useRef(false);
 
   useEffect(() => {
-    if (hasRegisteredEmail && viewMode !== 'chat') {
+    if (hasRegisteredEmail && viewMode !== 'chat' && !allowSiteWhenSignedIn) {
       setViewMode('chat');
       if (typeof window !== 'undefined' && window.location.pathname !== '/chat') {
         window.history.replaceState({}, '', '/chat');
       }
     }
-  }, [hasRegisteredEmail, viewMode]);
+  }, [hasRegisteredEmail, viewMode, allowSiteWhenSignedIn]);
 
   useEffect(() => {
     const handlePopState = () => {
-      if (hasRegisteredEmail || window.location.pathname.startsWith('/chat')) {
+      if ((hasRegisteredEmail && !allowSiteWhenSignedIn) || window.location.pathname.startsWith('/chat')) {
         setViewMode('chat');
       } else {
         setViewMode('site');
@@ -340,7 +381,7 @@ export default function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [hasRegisteredEmail]);
+  }, [hasRegisteredEmail, allowSiteWhenSignedIn]);
 
   // Dynamically bind app height & top to window.visualViewport so mobile virtual keyboard never clips Navbar
   useEffect(() => {
@@ -511,15 +552,19 @@ export default function App() {
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const latestConversationsRef = useRef<Conversation[]>(conversations);
   latestConversationsRef.current = conversations;
+  const latestRemindersRef = useRef<Reminder[]>(reminders);
+  latestRemindersRef.current = reminders;
   const syncedUidRef = useRef<string | null>(null);
+  const cloudProfileLoadedRef = useRef<string | null>(null);
   const profileSyncTimerRef = useRef<number | null>(null);
 
-  // Subscribe to Firebase Auth state & sync cloud memory for logged-in email
+  // Subscribe to Firebase Auth state & sync cloud memory, settings & reminders for logged-in email
   useEffect(() => {
     const unsub = subscribeToAuth(async (user) => {
       setAuthUser(user);
       if (!user) {
         syncedUidRef.current = null;
+        cloudProfileLoadedRef.current = null;
         return;
       }
 
@@ -531,24 +576,46 @@ export default function App() {
       }
 
       try {
-        const [cloudProfile, cloudConvs, cloudProjs] = await Promise.all([
+        const [cloudProfile, cloudConvs, cloudProjs, cloudReminders] = await Promise.all([
           loadCloudUserProfile(user.uid).catch(() => null),
           loadCloudConversations(user.uid).catch(() => [] as Conversation[]),
           loadCloudProjects(user.uid).catch(() => [] as Project[]),
+          loadCloudReminders(user.uid).catch(() => [] as Reminder[]),
         ]);
+
+        const { accountSettings, ...cloudProfileFields } = cloudProfile || {};
 
         setUserProfile((local) => ({
           ...local,
-          ...(cloudProfile || {}),
-          email: user.email || cloudProfile?.email || local.email,
-          name: cloudProfile?.name || local.name || user.displayName || undefined,
-          city: cloudProfile?.city || local.city,
-          likedTopics: mergeStringArrays(cloudProfile?.likedTopics, local.likedTopics, 30),
-          dislikedTopics: mergeStringArrays(cloudProfile?.dislikedTopics, local.dislikedTopics, 30),
-          notes: mergeStringArrays(cloudProfile?.notes, local.notes, 50),
-          totalLikes: Math.max(cloudProfile?.totalLikes || 0, local.totalLikes || 0),
-          totalDislikes: Math.max(cloudProfile?.totalDislikes || 0, local.totalDislikes || 0),
+          ...cloudProfileFields,
+          email: user.email || cloudProfileFields?.email || local.email,
+          name: cloudProfileFields?.name || local.name || user.displayName || undefined,
+          city: cloudProfileFields?.city || local.city,
+          likedTopics: mergeStringArrays(cloudProfileFields?.likedTopics, local.likedTopics, 30),
+          dislikedTopics: mergeStringArrays(cloudProfileFields?.dislikedTopics, local.dislikedTopics, 30),
+          notes: mergeStringArrays(cloudProfileFields?.notes, local.notes, 50),
+          slangTerms: mergeStringArrays(cloudProfileFields?.slangTerms, local.slangTerms, 25),
+          totalLikes: Math.max(cloudProfileFields?.totalLikes || 0, local.totalLikes || 0),
+          totalDislikes: Math.max(cloudProfileFields?.totalDislikes || 0, local.totalDislikes || 0),
         }));
+
+        if (accountSettings) {
+          if (accountSettings.theme) {
+            setTheme(accountSettings.theme);
+          }
+          if (accountSettings.persona) {
+            setPersona(accountSettings.persona);
+          }
+          if (typeof accountSettings.useSearch === 'boolean') {
+            setUseSearch(accountSettings.useSearch);
+          }
+          if (accountSettings.responsePrefs) {
+            setResponsePrefs((local) => ({
+              ...local,
+              ...accountSettings.responsePrefs,
+            }));
+          }
+        }
 
         const cloudIds = new Set(cloudConvs.map((c) => c.id));
         const localOnlyConvs = latestConversationsRef.current.filter((c) => !cloudIds.has(c.id));
@@ -578,24 +645,51 @@ export default function App() {
             return Array.from(byId.values());
           });
         }
+
+        const cloudRemIds = new Set(cloudReminders.map((r) => r.id));
+        const localOnlyReminders = latestRemindersRef.current.filter((r) => !cloudRemIds.has(r.id));
+        if (localOnlyReminders.length > 0) {
+          localOnlyReminders.forEach((r) => saveCloudReminder(user.uid, r).catch(() => {}));
+        }
+        if (cloudReminders.length > 0) {
+          setReminders((local) => {
+            const byId = new Map<string, Reminder>();
+            for (const r of local) byId.set(r.id, r);
+            for (const r of cloudReminders) {
+              const existing = byId.get(r.id);
+              if (!existing || r.updatedAt >= existing.updatedAt) {
+                byId.set(r.id, { ...r, notifiedAt: existing?.notifiedAt });
+              }
+            }
+            return Array.from(byId.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+          });
+        }
+
+        cloudProfileLoadedRef.current = user.uid;
       } catch (err) {
         console.warn('Cloud sync load warning:', err);
+        cloudProfileLoadedRef.current = user.uid;
       }
     });
 
     return () => unsub();
   }, []);
 
-  // Debounced cloud profile save when signed in
+  // Debounced cloud profile & account preferences save when signed in
   useEffect(() => {
     safeSetItem(PROFILE_KEY, JSON.stringify(userProfile));
-    if (!authUser) return;
+    if (!authUser || cloudProfileLoadedRef.current !== authUser.uid) return;
 
     if (profileSyncTimerRef.current) {
       window.clearTimeout(profileSyncTimerRef.current);
     }
     profileSyncTimerRef.current = window.setTimeout(() => {
-      saveCloudUserProfile(authUser, userProfile).catch(() => {});
+      saveCloudUserProfile(authUser, userProfile, {
+        theme,
+        persona,
+        useSearch,
+        responsePrefs,
+      }).catch(() => {});
     }, 600);
 
     return () => {
@@ -603,7 +697,49 @@ export default function App() {
         window.clearTimeout(profileSyncTimerRef.current);
       }
     };
-  }, [userProfile, authUser]);
+  }, [userProfile, theme, persona, useSearch, responsePrefs, authUser]);
+
+  // Persist reminders locally & check due alerts
+  useEffect(() => {
+    safeSetItem(REMINDERS_KEY, JSON.stringify(reminders));
+  }, [reminders]);
+
+  useEffect(() => {
+    const checkDueReminders = () => {
+      const now = Date.now();
+      const dueNow = latestRemindersRef.current.filter(
+        (r) => !r.completed && typeof r.dueAt === 'number' && r.dueAt <= now && !r.notifiedAt
+      );
+      if (dueNow.length === 0) return;
+
+      const dueIds = new Set(dueNow.map((r) => r.id));
+      cyberAudio.playLike();
+
+      setReminders((prev) =>
+        prev.map((r) => (dueIds.has(r.id) ? { ...r, notifiedAt: now } : r))
+      );
+
+      setDueBannerReminders((prev) => {
+        const existingIds = new Set(prev.map((x) => x.id));
+        const additions = dueNow.filter((d) => !existingIds.has(d.id));
+        return additions.length > 0 ? [...additions, ...prev].slice(0, 3) : prev;
+      });
+
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        dueNow.slice(0, 2).forEach((r) => {
+          try {
+            new Notification('NEXUS AI · Lembrete', {
+              body: r.title,
+            });
+          } catch {}
+        });
+      }
+    };
+
+    checkDueReminders();
+    const timer = window.setInterval(checkDueReminders, 20000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     safeSetItem(THEME_KEY, theme);
@@ -1015,6 +1151,73 @@ export default function App() {
     );
   };
 
+  const handleAddReminder = (input: {
+    title: string;
+    dueAt?: number | null;
+    notes?: string;
+    sourceConvId?: string;
+  }) => {
+    const cleanTitle = (input.title || '').trim().slice(0, 200);
+    if (!cleanTitle) return;
+
+    const existing = latestRemindersRef.current.find(
+      (r) => !r.completed && r.title.trim().toLowerCase() === cleanTitle.toLowerCase()
+    );
+    if (existing) return;
+
+    const now = Date.now();
+    const newRem: Reminder = {
+      id: 'rem-' + now + '-' + Math.random().toString(36).slice(2, 6),
+      title: cleanTitle,
+      notes: input.notes?.trim() ? input.notes.trim().slice(0, 500) : undefined,
+      dueAt: typeof input.dueAt === 'number' ? input.dueAt : null,
+      completed: false,
+      sourceConvId: input.sourceConvId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setReminders((prev) => [newRem, ...prev]);
+    if (authUser) {
+      saveCloudReminder(authUser.uid, newRem).catch(() => {});
+    }
+  };
+
+  const handleToggleReminder = (id: string) => {
+    setReminders((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const updated: Reminder = {
+          ...r,
+          completed: !r.completed,
+          updatedAt: Date.now(),
+        };
+        if (authUser) {
+          saveCloudReminder(authUser.uid, updated).catch(() => {});
+        }
+        return updated;
+      })
+    );
+    setDueBannerReminders((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const handleDeleteReminder = (id: string) => {
+    setReminders((prev) => prev.filter((r) => r.id !== id));
+    setDueBannerReminders((prev) => prev.filter((r) => r.id !== id));
+    if (authUser) {
+      deleteCloudReminder(authUser.uid, id).catch(() => {});
+    }
+  };
+
+  const handleClearCompletedReminders = () => {
+    const completedIds = reminders.filter((r) => r.completed).map((r) => r.id);
+    if (completedIds.length === 0) return;
+    setReminders((prev) => prev.filter((r) => !r.completed));
+    if (authUser) {
+      completedIds.forEach((id) => deleteCloudReminder(authUser.uid, id).catch(() => {}));
+    }
+  };
+
   const handleClearAll = (type: 'all' | 'archived' = 'all') => {
     if (type === 'archived') {
       const toDelete = conversations.filter((c) => c.isArchived);
@@ -1221,8 +1424,6 @@ export default function App() {
     let revealedLength = 0;
     let placeholderInserted = false;
     let revealTimerId: number | null = null;
-    let revealDoneResolver: (() => void) | null = null;
-    let streamFinishedFlag = false;
 
     const markStreamingActive = (active: boolean) => {
       setStreamingMsgIds((prev) => {
@@ -1263,108 +1464,36 @@ export default function App() {
       );
     };
 
-    const advanceWordBoundary = (text: string, fromIndex: number, wordsCount: number): number => {
-      let idx = fromIndex;
-      const len = text.length;
-      for (let w = 0; w < wordsCount && idx < len; w++) {
-        // Consume any leading whitespace/newlines
-        while (idx < len && /\s/.test(text[idx])) {
-          idx++;
-        }
-        // Consume the next word characters
-        while (idx < len && !/\s/.test(text[idx])) {
-          idx++;
-        }
-        // Include a single trailing space if present so words feel natural
-        if (idx < len && text[idx] === ' ') {
-          idx++;
-        }
-      }
-      return Math.min(idx, len);
-    };
-
     const stopRevealLoop = () => {
       if (revealTimerId !== null) {
-        window.clearInterval(revealTimerId);
+        window.cancelAnimationFrame(revealTimerId);
         revealTimerId = null;
       }
-      if (revealDoneResolver) {
-        revealDoneResolver();
-        revealDoneResolver = null;
-      }
-    };
-
-    const ensureRevealLoop = () => {
-      if (revealTimerId !== null) return;
-      markStreamingActive(true);
-      revealTimerId = window.setInterval(() => {
-        if (revealedLength >= targetBuffer.length) {
-          if (streamFinishedFlag) {
-            stopRevealLoop();
-          }
-          return;
-        }
-
-        const backlog = targetBuffer.length - revealedLength;
-        let wordsPerTick = 3;
-        if (streamFinishedFlag) {
-          wordsPerTick = backlog > 180 ? 16 : backlog > 60 ? 10 : 6;
-        } else if (backlog > 180) {
-          wordsPerTick = 12;
-        } else if (backlog > 60) {
-          wordsPerTick = 7;
-        } else if (backlog > 20) {
-          wordsPerTick = 4;
-        }
-
-        const nextLen = advanceWordBoundary(targetBuffer, revealedLength, wordsPerTick);
-        if (nextLen > revealedLength) {
-          revealedLength = nextLen;
-          upsertStreamingMessage(targetBuffer.slice(0, revealedLength));
-        }
-
-        if (streamFinishedFlag && revealedLength >= targetBuffer.length) {
-          stopRevealLoop();
-        }
-      }, 12);
     };
 
     const enqueueStreamText = (fullAccumulated: string) => {
       targetBuffer = fullAccumulated;
-      if (targetBuffer.length > 0) {
-        ensureRevealLoop();
+      if (!targetBuffer) return;
+      markStreamingActive(true);
+      if (revealTimerId === null) {
+        revealTimerId = window.requestAnimationFrame(() => {
+          revealTimerId = null;
+          if (targetBuffer.length > revealedLength) {
+            revealedLength = targetBuffer.length;
+            upsertStreamingMessage(targetBuffer);
+          }
+        });
       }
     };
 
     const flushRemainingWords = async (finalFullText: string, signal: AbortSignal) => {
       targetBuffer = finalFullText;
-      streamFinishedFlag = true;
-      if (!targetBuffer || revealedLength >= targetBuffer.length) {
-        stopRevealLoop();
-        return;
+      stopRevealLoop();
+      if (signal.aborted || !targetBuffer) return;
+      if (revealedLength < targetBuffer.length) {
+        revealedLength = targetBuffer.length;
+        upsertStreamingMessage(targetBuffer);
       }
-      ensureRevealLoop();
-      await new Promise<void>((resolve) => {
-        if (signal.aborted || revealedLength >= targetBuffer.length) {
-          stopRevealLoop();
-          resolve();
-          return;
-        }
-        revealDoneResolver = resolve;
-        const onAbort = () => {
-          stopRevealLoop();
-          resolve();
-        };
-        signal.addEventListener('abort', onAbort, { once: true });
-        // Safety cap so very huge outputs never hold finalization > 200ms
-        window.setTimeout(() => {
-          if (revealTimerId !== null) {
-            revealedLength = targetBuffer.length;
-            upsertStreamingMessage(targetBuffer);
-            stopRevealLoop();
-          }
-        }, 200);
-      });
     };
 
     setThinkingConvIds((prev) => {
@@ -1403,15 +1532,43 @@ export default function App() {
         activeConvKey
       );
 
-      const formattedHistory = currentMessages.map((m) => ({
-        role: m.role,
-        content: m.content,
-        attachments: m.attachments,
-      }));
+      const recentMessages = currentMessages.slice(-24);
+      const formattedHistory = recentMessages.map((m, idx) => {
+        const keepBinaryData = idx >= recentMessages.length - 2;
+        return {
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments?.map((att) => ({
+            id: att.id,
+            name: att.name,
+            type: att.type,
+            mimeType: att.mimeType,
+            base64Data: keepBinaryData ? att.base64Data : undefined,
+            textContent:
+              att.textContent ||
+              (!keepBinaryData && att.base64Data
+                ? att.type === 'audio'
+                  ? '[Áudio enviado anteriormente]'
+                  : att.type === 'image'
+                  ? '[Imagem enviada anteriormente]'
+                  : '[Arquivo enviado anteriormente]'
+                : undefined),
+          })),
+        };
+      });
 
       const hasPastConversations = latestConversationsRef.current.some(
         (c) => c.id !== activeConvKey && c.messages && c.messages.length > 0
       );
+
+      const activeRemindersPayload = latestRemindersRef.current
+        .filter((r) => !r.completed)
+        .slice(0, 15)
+        .map((r) => ({
+          title: r.title,
+          dueAt: r.dueAt || null,
+          dueFormatted: r.dueAt ? formatReminderDue(r.dueAt) : undefined,
+        }));
 
       const requestBody = JSON.stringify({
         messages: formattedHistory,
@@ -1422,6 +1579,7 @@ export default function App() {
         clientLocation,
         userProfile: updatedProfile,
         responsePrefs,
+        reminders: activeRemindersPayload,
         globalMemoryContext,
         hasPastConversations,
       });
@@ -1576,6 +1734,24 @@ export default function App() {
 
       markStreamingActive(false);
       cyberAudio.playReceive();
+
+      // Auto-sync reminder cards when user explicitly asked NEXUS AI to set a reminder
+      if (/\b(me\s+lembr[ae]|cri[ae]\s+(?:um\s+)?lembrete|anot[ae]\s+(?:um\s+)?lembrete|agenda(?:r)?\s+(?:um\s+)?lembrete|avisa(?:r)?\s+(?:eu|me))\b/i.test(finalContent)) {
+        const reminderMatches = Array.from(
+          finalText.matchAll(/```(?:reminder|lembrete)\r?\n([\s\S]*?)```/gi)
+        );
+        for (const rm of reminderMatches) {
+          const parsedItems = parseReminderBlockItems(rm[1] || '');
+          for (const item of parsedItems.slice(0, 5)) {
+            handleAddReminder({
+              title: item.title,
+              dueAt: item.dueAt,
+              notes: item.notes,
+              sourceConvId: activeConvKey,
+            });
+          }
+        }
+      }
 
       setConversations((prev) =>
         prev.map((c) => {
@@ -1737,6 +1913,7 @@ export default function App() {
     if (selectedPersona) {
       setPersona(selectedPersona);
     }
+    setAllowSiteWhenSignedIn(false);
     navigateToView('chat');
     if (initialPrompt && initialPrompt.trim()) {
       handleSendMessage(initialPrompt.trim(), undefined, undefined, selectedPersona, true);
@@ -1754,6 +1931,7 @@ export default function App() {
   const handleSaveEmailFromSite = (email: string) => {
     setUserProfile((prev) => ({ ...prev, email }));
     setActiveId(null);
+    setAllowSiteWhenSignedIn(false);
     navigateToView('chat');
   };
 
@@ -1763,6 +1941,7 @@ export default function App() {
     try {
       await signInWithEmailAccount();
       setActiveId(null);
+      setAllowSiteWhenSignedIn(false);
       navigateToView('chat');
     } catch (err: any) {
       setAuthError(err?.message || 'Não foi possível entrar com sua conta Google.');
@@ -1771,7 +1950,7 @@ export default function App() {
     }
   };
 
-  if (viewMode === 'site' && !hasRegisteredEmail) {
+  if (viewMode === 'site' && (!hasRegisteredEmail || allowSiteWhenSignedIn)) {
     return (
       <>
         <OfflineIndicator />
@@ -1780,6 +1959,7 @@ export default function App() {
           onEnterChat={handleEnterChatFromSite}
           onSaveEmail={handleSaveEmailFromSite}
           onSignInWithGoogle={handleSignInFromSite}
+          isReturningAccount={hasRegisteredEmail}
           isAuthLoading={isAuthLoading}
           authError={authError}
           viewportStyle={viewportStyle}
@@ -1833,6 +2013,11 @@ export default function App() {
       <AccountModal
         isOpen={isAccountOpen}
         onClose={() => setIsAccountOpen(false)}
+        onGoHome={() => {
+          setIsAccountOpen(false);
+          setAllowSiteWhenSignedIn(true);
+          navigateToView('site');
+        }}
         authUser={authUser}
         isAuthLoading={isAuthLoading}
         authError={authError}
@@ -1845,6 +2030,65 @@ export default function App() {
         onResetResponsePrefs={() => setResponsePrefs(DEFAULT_RESPONSE_PREFS)}
         theme={theme}
       />
+
+      <RemindersModal
+        isOpen={isRemindersOpen}
+        onClose={() => setIsRemindersOpen(false)}
+        reminders={reminders}
+        onAddReminder={handleAddReminder}
+        onToggleReminder={handleToggleReminder}
+        onDeleteReminder={handleDeleteReminder}
+        onClearCompleted={handleClearCompletedReminders}
+        theme={theme}
+        isSynced={Boolean(authUser)}
+      />
+
+      {dueBannerReminders.length > 0 && (
+        <div className="fixed top-16 right-3 sm:right-5 z-50 w-72 sm:w-80 space-y-2 animate-fadeIn">
+          {dueBannerReminders.map((rem) => (
+            <div
+              key={rem.id}
+              className="rounded-xl border border-amber-400/70 bg-[#0b1326]/95 backdrop-blur-md p-3 shadow-[0_0_24px_rgba(245,158,11,0.3)] flex items-start gap-2.5"
+            >
+              <BellRing className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] font-mono uppercase tracking-wider text-amber-300 font-semibold">
+                  Lembrete no horário
+                </p>
+                <p className="text-xs font-medium text-white break-words mt-0.5">{rem.title}</p>
+                <div className="flex items-center gap-2 mt-2 text-[10px] font-mono">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleReminder(rem.id)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/25 border border-emerald-400/50 text-emerald-200 hover:bg-emerald-500/40"
+                  >
+                    <Check className="w-3 h-3" />
+                    <span>Concluir</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRemindersOpen(true);
+                      setDueBannerReminders((prev) => prev.filter((x) => x.id !== rem.id));
+                    }}
+                    className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 text-slate-200"
+                  >
+                    Abrir
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDueBannerReminders((prev) => prev.filter((x) => x.id !== rem.id))}
+                className="text-slate-400 hover:text-white shrink-0"
+                title="Dispensar alerta"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Sidebar
         conversations={conversations}
@@ -1875,6 +2119,9 @@ export default function App() {
         userProfile={userProfile}
         authUser={authUser}
         onOpenAccount={() => setIsAccountOpen(true)}
+        onOpenReminders={() => setIsRemindersOpen(true)}
+        pendingRemindersCount={reminders.filter((r) => !r.completed).length}
+        overdueRemindersCount={reminders.filter((r) => !r.completed && r.dueAt && r.dueAt <= Date.now()).length}
       />
 
       <div
@@ -1922,9 +2169,12 @@ export default function App() {
                     onEditMessage={message.role === 'user' ? handleEditMessage : undefined}
                     onFeedback={handleFeedback}
                     onPollVote={handlePollVote}
+                    onAddReminder={handleAddReminder}
+                    reminders={reminders}
                     isBusy={isThinking}
                     isStreaming={streamingMsgIds.has(message.id)}
                     textSize={responsePrefs.fontSize}
+                    voiceName={responsePrefs.voiceName}
                     theme={theme}
                   />
                 ))}

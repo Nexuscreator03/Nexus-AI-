@@ -9,13 +9,122 @@ function normalizeText(str: string): string {
 
 const STOP_WORDS = new Set([
   'a', 'o', 'as', 'os', 'um', 'uma', 'de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no',
-  'nas', 'nos', 'por', 'para', 'com', 'sem', 'que', 'qual', 'quais', 'quem', 'onde',
-  'como', 'quando', 'porque', 'porquê', 'sobre', 'entre', 'isso', 'isto', 'aquilo',
-  'meu', 'minha', 'seu', 'sua', 'voce', 'você', 'ele', 'ela', 'eu', 'nos', 'nós',
-  'sim', 'nao', 'não', 'mais', 'menos', 'muito', 'muita', 'esta', 'está', 'estou',
+  'nas', 'nos', 'por', 'para', 'pra', 'pro', 'com', 'sem', 'que', 'qual', 'quais', 'quem',
+  'onde', 'como', 'quando', 'porque', 'porquê', 'sobre', 'entre', 'isso', 'isto', 'aquilo',
+  'meu', 'minha', 'seu', 'sua', 'voce', 'você', 'vc', 'ele', 'ela', 'eu', 'nós', 'sim',
+  'nao', 'não', 'mais', 'menos', 'muito', 'muita', 'esta', 'está', 'estou', 'tá', 'ta',
   'fale', 'diga', 'me', 'te', 'se', 'ao', 'aos', 'pelo', 'pela', 'foi', 'era', 'ser',
   'ter', 'tem', 'tinha', 'fazer', 'fez', 'lembra', 'lembrar', 'antiga', 'conversa',
+  'aqui', 'ali', 'lá', 'hoje', 'agora', 'amanha', 'ontem', 'tudo', 'bem', 'bom', 'boa',
+  'dia', 'tarde', 'noite', 'pode', 'quero', 'gosto', 'falar', 'usar', 'coisa', 'coisas',
 ]);
+
+// Known informal Brazilian Portuguese slang & colloquial expressions (normalized key -> canonical form)
+const SLANG_LEXICON: Record<string, string> = {
+  'mano': 'mano',
+  'vei': 'véi',
+  'vey': 'véi',
+  'cara': 'cara',
+  'parca': 'parça',
+  'cria': 'cria',
+  'brabo': 'brabo',
+  'braba': 'braba',
+  'zika': 'zika',
+  'daora': 'daora',
+  'da hora': 'da hora',
+  'massa': 'massa',
+  'top': 'top',
+  'show': 'show',
+  'firmeza': 'firmeza',
+  'suave': 'suave',
+  'de boa': 'de boa',
+  'sussa': 'sussa',
+  'partiu': 'partiu',
+  'bora': 'bora',
+  'fechou': 'fechou',
+  'demoro': 'demorô',
+  'tmj': 'tmj',
+  'tamo junto': 'tamo junto',
+  'vlw': 'vlw',
+  'flw': 'flw',
+  'blz': 'blz',
+  'pprt': 'pprt',
+  'papo reto': 'papo reto',
+  'tlgd': 'tlgd',
+  'ta ligado': 'tá ligado',
+  'slk': 'slk',
+  'seloko': 'seloko',
+  'mds': 'mds',
+  'vish': 'vish',
+  'vixe': 'vixe',
+  'caraca': 'caraca',
+  'eita': 'eita',
+  'oxe': 'oxe',
+  'oxente': 'oxente',
+  'uai': 'uai',
+  'bah': 'bah',
+  'tche': 'tchê',
+  'guri': 'guri',
+  'guria': 'guria',
+  'role': 'rolê',
+  'trampo': 'trampo',
+  'corre': 'corre',
+  'hype': 'hype',
+  'vibe': 'vibe',
+  'tankar': 'tankar',
+  'intankavel': 'intankável',
+  'cringe': 'cringe',
+  'bagulho': 'bagulho',
+  'parada': 'parada',
+  'sinistro': 'sinistro',
+  'bizarro': 'bizarro',
+  'mitou': 'mitou',
+  'amassou': 'amassou',
+  'mandou bem': 'mandou bem',
+  'e nois': 'é nois',
+  'nois': 'nois',
+  'bro': 'bro',
+  'migo': 'migo',
+  'miga': 'miga',
+  'meu rei': 'meu rei',
+  'meu consagrado': 'meu consagrado',
+  'campeao': 'campeão',
+  'coe': 'coé',
+  'qual foi': 'qual foi',
+  'fala tu': 'fala tu',
+  'fala comigo': 'fala comigo',
+  'bicho': 'bicho',
+  'irmao': 'irmão',
+  'maluco': 'maluco',
+  'insano': 'insano',
+  'monstro': 'monstro',
+  'fera': 'fera',
+  'mestre': 'mestre',
+  'chave': 'chave',
+  'chavoso': 'chavoso',
+  'bolado': 'bolado',
+  'pistola': 'pistola',
+  'tiltado': 'tiltado',
+  'flopou': 'flopou',
+  'hitou': 'hitou',
+  'brutal': 'brutal',
+  'tranquilo': 'tranquilo',
+  'po': 'pô',
+  'nossa': 'nossa',
+  'valeu': 'valeu',
+  'salve': 'salve',
+  'eae': 'eae',
+  'opa': 'opa',
+  'pdc': 'pdc',
+  'pode cre': 'pode crê',
+  'fala ai': 'fala aí',
+  'beleza': 'beleza',
+  'bota fe': 'bota fé',
+  'boto fe': 'boto fé',
+  'sinistrao': 'sinistrão',
+};
+
+const MULTI_WORD_SLANGS = Object.keys(SLANG_LEXICON).filter((k) => k.includes(' '));
 
 function extractKeywords(text: string): string[] {
   const tokens = normalizeText(text)
@@ -25,14 +134,98 @@ function extractKeywords(text: string): string[] {
   return Array.from(new Set(tokens));
 }
 
+function learnUserSlang(
+  text: string,
+  prevTerms: string[] = [],
+  prevCounts: Record<string, number> = {}
+): { slangTerms: string[]; slangCounts: Record<string, number>; changed: boolean } {
+  const norm = normalizeText(text)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!norm) {
+    return { slangTerms: prevTerms, slangCounts: prevCounts, changed: false };
+  }
+
+  const nextCounts: Record<string, number> = { ...prevCounts };
+  const matchedExplicit = new Set<string>();
+
+  for (const phrase of MULTI_WORD_SLANGS) {
+    const regex = new RegExp(`\\b${phrase.replace(/\s+/g, '\\s+')}\\b`, 'i');
+    if (regex.test(norm)) {
+      const canonical = SLANG_LEXICON[phrase];
+      nextCounts[canonical] = (nextCounts[canonical] || 0) + 2;
+      matchedExplicit.add(canonical);
+    }
+  }
+
+  const words = norm.split(' ').filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
+  const seenInMsg = new Set<string>();
+  for (const w of words) {
+    if (seenInMsg.has(w)) continue;
+    seenInMsg.add(w);
+    const canonical = SLANG_LEXICON[w];
+    if (canonical) {
+      nextCounts[canonical] = (nextCounts[canonical] || 0) + 2;
+      matchedExplicit.add(canonical);
+    } else if (
+      w.length >= 3 &&
+      w.length <= 16 &&
+      !/^\d+$/.test(w) &&
+      !/^(como|onde|quando|porque|sobre|qual|quais|quem|nexus|google|brasil|mundo)$/.test(w)
+    ) {
+      // Track casual single-word candidates gently; they only enter slangTerms if used repeatedly (>= 3 times across messages)
+      nextCounts[w] = (nextCounts[w] || 0) + 1;
+    }
+  }
+
+  // Cap dictionary size to keep profile compact
+  const sortedEntries = Object.entries(nextCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 60);
+  const prunedCounts = Object.fromEntries(sortedEntries);
+
+  const promoted = sortedEntries
+    .filter(([term, count]) => Boolean(SLANG_LEXICON[normalizeText(term)]) || count >= 3)
+    .map(([term]) => term)
+    .slice(0, 25);
+
+  const mergedTerms: string[] = [];
+  const seenMerged = new Set<string>();
+  for (const item of [...promoted, ...prevTerms]) {
+    const key = normalizeText(item);
+    if (item && !seenMerged.has(key)) {
+      seenMerged.add(key);
+      mergedTerms.push(item);
+    }
+    if (mergedTerms.length >= 25) break;
+  }
+
+  const changed =
+    matchedExplicit.size > 0 ||
+    mergedTerms.length !== prevTerms.length ||
+    mergedTerms.some((t, i) => prevTerms[i] !== t) ||
+    Object.keys(prunedCounts).length !== Object.keys(prevCounts).length;
+
+  return { slangTerms: mergedTerms, slangCounts: prunedCounts, changed };
+}
+
 /**
  * Automatically extracts user facts, identity details, likes, dislikes, comfort preferences,
- * and context from natural Portuguese messages so NEXUS AI adapts to each logged-in user.
+ * slang/informal style, and context from natural Portuguese messages so NEXUS AI adapts to each logged-in user.
  */
 export function extractUserKnowledge(text: string, profile: UserProfile): UserProfile {
-  if (!text || text.trim().length < 4) return profile;
+  if (!text || text.trim().length < 2) return profile;
 
   const clean = text.trim();
+  const slangResult = learnUserSlang(
+    clean,
+    profile.slangTerms || [],
+    profile.slangCounts || {}
+  );
+
+  if (clean.length < 4 && !slangResult.changed) return profile;
+
   let updatedName = profile.name;
   let updatedCity = profile.city;
   let updatedVibe = profile.userVibe;
@@ -136,6 +329,8 @@ export function extractUserKnowledge(text: string, profile: UserProfile): UserPr
     likedTopics: liked.slice(0, 30),
     dislikedTopics: disliked.slice(0, 30),
     notes: notes.slice(0, 50),
+    slangTerms: slangResult.slangTerms,
+    slangCounts: slangResult.slangCounts,
   };
 }
 
@@ -279,11 +474,11 @@ export function buildCrossConversationMemory(
   scoredConvs.sort((a, b) => b.score - a.score || b.conv.updatedAt - a.conv.updatedAt);
 
   const lines: string[] = [];
-  let charBudget = asksAboutPast ? 5400 : 3200;
+  let charBudget = asksAboutPast ? 4200 : 950;
 
-  const topRelevant = scoredConvs.slice(0, asksAboutPast ? 8 : 5);
+  const topRelevant = scoredConvs.slice(0, asksAboutPast ? 7 : 3);
   for (const item of topRelevant) {
-    if (charBudget <= 280) break;
+    if (charBudget <= 200) break;
     const dateStr = new Date(item.conv.updatedAt).toLocaleString('pt-BR', {
       dateStyle: 'short',
       timeStyle: 'short',
@@ -294,21 +489,21 @@ export function buildCrossConversationMemory(
 
     const msgsToShow =
       item.matchedMessages.length > 0
-        ? item.matchedMessages
+        ? item.matchedMessages.slice(0, asksAboutPast ? 4 : 2)
         : item.conv.messages
             .filter((m) => !m.error && m.content)
-            .slice(-3)
+            .slice(asksAboutPast ? -3 : -2)
             .map((m, idx) => ({
               role: m.role === 'user' ? 'Usuário' : 'NEXUS',
-              text: m.content.replace(/\s+/g, ' ').slice(0, 220),
+              text: m.content.replace(/\s+/g, ' ').slice(0, asksAboutPast ? 220 : 130),
               time: '',
               msgScore: 0,
               idx,
             }));
 
     for (const msg of msgsToShow) {
-      const entry = `   - [${msg.role}]: ${msg.text}`;
-      if (charBudget - entry.length < 100) break;
+      const entry = `   - [${msg.role}]: ${msg.text.slice(0, asksAboutPast ? 260 : 130)}`;
+      if (charBudget - entry.length < 80) break;
       lines.push(entry);
       charBudget -= entry.length;
     }

@@ -13,15 +13,36 @@ import {
   User as UserIcon,
   SlidersHorizontal,
   RotateCcw,
+  Volume2,
+  Home,
+  Sparkles,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
-import { ThemeMode, UserProfile, ResponseCustomization } from '../types/chat';
+import {
+  ThemeMode,
+  UserProfile,
+  ResponseCustomization,
+  AiVoiceId,
+  AI_VOICE_OPTIONS,
+} from '../types/chat';
 import { getThemeColors } from '../utils/themeStyles';
 import { cyberAudio } from '../utils/audio';
+import {
+  base64ToPlayableUrl,
+  getCachedClientTts,
+  getVoicePreviewSampleText,
+  prefetchVoicePreviews,
+  registerGlobalTtsStop,
+  revokePlayableUrl,
+  setCachedClientTts,
+  speakWithDistinctBrowserVoice,
+  stopGlobalTts,
+} from '../utils/browserTts';
 
 interface AccountModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onGoHome: () => void;
   authUser: User | null;
   isAuthLoading: boolean;
   authError: string | null;
@@ -38,6 +59,7 @@ interface AccountModalProps {
 export const AccountModal: React.FC<AccountModalProps> = ({
   isOpen,
   onClose,
+  onGoHome,
   authUser,
   isAuthLoading,
   authError,
@@ -53,15 +75,171 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [newLike, setNewLike] = useState('');
   const [newDislike, setNewDislike] = useState('');
   const [editingName, setEditingName] = useState(userProfile.name || '');
+  const [previewingVoice, setPreviewingVoice] = useState<AiVoiceId | null>(null);
+  const previewAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const previewBlobUrlRef = React.useRef<string | null>(null);
+  const previewAbortRef = React.useRef<AbortController | null>(null);
+  const previewRequestIdRef = React.useRef(0);
   const colors = getThemeColors(theme);
+
+  const stopPreviewVoice = () => {
+    previewRequestIdRef.current += 1;
+    if (previewAbortRef.current) {
+      previewAbortRef.current.abort();
+      previewAbortRef.current = null;
+    }
+    if (previewAudioRef.current) {
+      previewAudioRef.current.onended = null;
+      previewAudioRef.current.onerror = null;
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+    revokePlayableUrl(previewBlobUrlRef.current);
+    previewBlobUrlRef.current = null;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setPreviewingVoice(null);
+  };
 
   useEffect(() => {
     if (isOpen) {
       setEditingName(userProfile.name || authUser?.displayName || '');
+      let retryTimer: number | null = null;
+      void prefetchVoicePreviews().then((complete) => {
+        if (!complete) {
+          retryTimer = window.setTimeout(() => {
+            void prefetchVoicePreviews();
+          }, 3200);
+        }
+      });
+      return () => {
+        if (retryTimer) window.clearTimeout(retryTimer);
+      };
+    } else {
+      stopPreviewVoice();
     }
   }, [isOpen, userProfile.name, authUser?.displayName]);
 
+  useEffect(() => {
+    return () => {
+      stopPreviewVoice();
+    };
+  }, []);
+
   if (!isOpen) return null;
+
+  const activeVoiceId: AiVoiceId = responsePrefs.voiceName || 'Kore';
+
+  const handlePreviewVoice = async (voiceId: AiVoiceId, forcePlay = false) => {
+    if (!forcePlay && previewingVoice === voiceId) {
+      stopPreviewVoice();
+      registerGlobalTtsStop(null);
+      return;
+    }
+
+    stopGlobalTts();
+    stopPreviewVoice();
+
+    const reqId = ++previewRequestIdRef.current;
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    registerGlobalTtsStop(stopPreviewVoice);
+    setPreviewingVoice(voiceId);
+
+    const sampleText = getVoicePreviewSampleText(voiceId);
+
+    const playWav = async (audioBase64: string, mimeType: string): Promise<boolean> => {
+      if (previewRequestIdRef.current !== reqId) return false;
+      const { url, isBlob } = base64ToPlayableUrl(audioBase64, mimeType || 'audio/wav');
+      if (isBlob) {
+        previewBlobUrlRef.current = url;
+      }
+      const audio = new Audio(url);
+      previewAudioRef.current = audio;
+
+      const cleanup = () => {
+        if (previewAudioRef.current === audio) {
+          previewAudioRef.current = null;
+        }
+        if (previewBlobUrlRef.current === url) {
+          revokePlayableUrl(url);
+          previewBlobUrlRef.current = null;
+        }
+        if (previewRequestIdRef.current === reqId) {
+          setPreviewingVoice(null);
+        }
+      };
+
+      audio.onended = cleanup;
+      audio.onerror = cleanup;
+
+      try {
+        await audio.play();
+        if (previewRequestIdRef.current !== reqId) {
+          audio.pause();
+          cleanup();
+          return false;
+        }
+        return true;
+      } catch {
+        audio.pause();
+        cleanup();
+        return false;
+      }
+    };
+
+    try {
+      const cached = getCachedClientTts(voiceId, sampleText);
+      if (cached) {
+        const played = await playWav(cached.audioBase64, cached.mimeType);
+        if (played || previewRequestIdRef.current !== reqId) return;
+      }
+
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: sampleText, voiceName: voiceId }),
+        signal: controller.signal,
+      });
+
+      if (previewRequestIdRef.current !== reqId) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        if (previewRequestIdRef.current !== reqId) return;
+        if (data.audioBase64) {
+          const mime = data.mimeType || 'audio/wav';
+          setCachedClientTts(voiceId, sampleText, {
+            audioBase64: data.audioBase64,
+            mimeType: mime,
+            cleanSpeechText: data.cleanSpeechText || sampleText,
+          });
+          const played = await playWav(data.audioBase64, mime);
+          if (played || previewRequestIdRef.current !== reqId) return;
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || previewRequestIdRef.current !== reqId) return;
+    }
+
+    if (previewRequestIdRef.current !== reqId) return;
+    const started = await speakWithDistinctBrowserVoice({
+      text: sampleText,
+      voiceId,
+      isCancelled: () => previewRequestIdRef.current !== reqId,
+      onStart: () => {},
+      onEnd: () => {
+        if (previewRequestIdRef.current === reqId) setPreviewingVoice(null);
+      },
+      onError: () => {
+        if (previewRequestIdRef.current === reqId) setPreviewingVoice(null);
+      },
+    });
+    if (!started && previewRequestIdRef.current === reqId) {
+      setPreviewingVoice(null);
+    }
+  };
 
   const handleAddLike = (e: React.FormEvent) => {
     e.preventDefault();
@@ -413,18 +591,82 @@ export const AccountModal: React.FC<AccountModalProps> = ({
           )}
         </div>
 
+        {/* Learned Slang & Frequent Informal Words */}
+        <div className="space-y-2 p-3 rounded-xl bg-black/30 border border-cyan-500/20">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-mono text-cyan-300 font-semibold">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Gírias & Seu Jeito de Falar ({userProfile.slangTerms?.length ?? 0})</span>
+            </div>
+            {(userProfile.slangTerms?.length ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  cyberAudio.playDelete();
+                  onUpdateProfile((prev) => ({ ...prev, slangTerms: [], slangCounts: {} }));
+                }}
+                className="text-[10px] font-mono text-slate-400 hover:text-rose-300 transition-colors"
+                title="Limpar gírias aprendidas"
+              >
+                Limpar
+              </button>
+            )}
+          </div>
+
+          {!userProfile.slangTerms || userProfile.slangTerms.length === 0 ? (
+            <p className="text-[11px] font-mono text-slate-500">
+              Converse naturalmente usando suas gírias e expressões — o NEXUS aprende e entra na sua vibe quando fizer sentido.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {userProfile.slangTerms.map((term) => (
+                <span
+                  key={term}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-950/50 border border-cyan-500/30 text-[11px] font-mono text-cyan-200"
+                >
+                  <span>{term}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateProfile((prev) => {
+                        const nextCounts = { ...(prev.slangCounts || {}) };
+                        delete nextCounts[term];
+                        return {
+                          ...prev,
+                          slangTerms: (prev.slangTerms || []).filter((t) => t !== term),
+                          slangCounts: nextCounts,
+                        };
+                      })
+                    }
+                    className="text-cyan-400 hover:text-white"
+                    title="Remover expressão"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Estilo da IA & Preferências de Texto */}
         <div className="space-y-2.5 p-3 rounded-xl bg-black/35 border border-white/10 text-[11px] font-mono">
           <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-white/10">
-            <div className="flex items-center gap-1.5 text-slate-200 font-semibold">
-              <SlidersHorizontal className={`w-3.5 h-3.5 ${colors.accent}`} />
-              <span>Estilo da Resposta & Texto</span>
+            <div className="flex items-center gap-1.5 text-slate-200 font-semibold min-w-0">
+              <SlidersHorizontal className={`w-3.5 h-3.5 shrink-0 ${colors.accent}`} />
+              <span className="truncate">Estilo, Voz & Tema</span>
+              {authUser && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 shrink-0">
+                  Sincronizado
+                </span>
+              )}
             </div>
             {(responsePrefs.tone !== 'friendly' ||
               responsePrefs.length !== 'balanced' ||
               responsePrefs.format !== 'rich' ||
               !responsePrefs.useEmojis ||
               responsePrefs.fontSize !== 'medium' ||
+              activeVoiceId !== 'Kore' ||
               responsePrefs.customInstructions.trim().length > 0) && (
               <button
                 type="button"
@@ -583,6 +825,73 @@ export const AccountModal: React.FC<AccountModalProps> = ({
             </div>
           </div>
 
+          <div className="space-y-1.5 pt-1 border-t border-white/10">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+              Voz da IA (2 femininas · 2 masculinas)
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {AI_VOICE_OPTIONS.map((voice) => {
+                const isSelected = activeVoiceId === voice.id;
+                const isTesting = previewingVoice === voice.id;
+                return (
+                  <div
+                    key={voice.id}
+                    className={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border transition-colors ${
+                      isSelected
+                        ? colors.badgeBg
+                        : 'bg-black/35 text-slate-300 border-white/10 hover:border-white/25'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cyberAudio.playClick();
+                        onUpdateResponsePrefs((p) => ({ ...p, voiceName: voice.id }));
+                        void handlePreviewVoice(voice.id, true);
+                      }}
+                      className="flex-1 text-left min-w-0 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-white truncate">{voice.label}</span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                            voice.gender === 'female'
+                              ? 'border-pink-400/35 bg-pink-500/15 text-pink-200'
+                              : 'border-sky-400/35 bg-sky-500/15 text-sky-200'
+                          }`}
+                        >
+                          {voice.genderLabel}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 truncate mt-0.5">{voice.style}</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cyberAudio.playClick();
+                        if (!isSelected) {
+                          onUpdateResponsePrefs((p) => ({ ...p, voiceName: voice.id }));
+                          void handlePreviewVoice(voice.id, true);
+                        } else {
+                          void handlePreviewVoice(voice.id, false);
+                        }
+                      }}
+                      className="p-1.5 rounded-md bg-black/45 border border-white/15 text-slate-200 hover:text-white hover:border-cyan-400/50 shrink-0 cursor-pointer"
+                      title={isTesting ? `Parar prévia da voz ${voice.label}` : `Ouvir prévia da voz ${voice.label}`}
+                    >
+                      {isTesting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-300" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="space-y-1">
             <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
               Regra fixa personalizada (opcional)
@@ -598,6 +907,21 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               className="w-full rounded-lg bg-black/45 border border-white/15 px-2.5 py-1.5 text-[11px] text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
             />
           </div>
+        </div>
+
+        {/* Bottom Tab: Voltar pra página inicial */}
+        <div className="pt-2 border-t border-white/10">
+          <button
+            type="button"
+            onClick={() => {
+              cyberAudio.playClick();
+              onGoHome();
+            }}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-black/45 hover:bg-white/10 border border-white/15 hover:border-cyan-400/50 text-xs font-mono font-semibold text-slate-200 hover:text-white transition-all cursor-pointer"
+          >
+            <Home className="w-4 h-4 text-cyan-300" />
+            <span>Voltar pra página inicial</span>
+          </button>
         </div>
       </div>
     </div>

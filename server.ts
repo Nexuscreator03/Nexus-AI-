@@ -15,8 +15,9 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '25mb' }));
 
-// Helper to reuse singleton GoogleGenAI client securely on the server
+// Helper to reuse singleton GoogleGenAI clients securely on the server
 let cachedGeminiClient: GoogleGenAI | null = null;
+let cachedGeminiBetaClient: GoogleGenAI | null = null;
 let cachedGeminiKey = '';
 
 function getGeminiClient(): GoogleGenAI {
@@ -28,6 +29,7 @@ function getGeminiClient(): GoogleGenAI {
     return cachedGeminiClient;
   }
   cachedGeminiKey = apiKey;
+  cachedGeminiBetaClient = null;
   cachedGeminiClient = new GoogleGenAI({
     apiKey,
     httpOptions: {
@@ -37,6 +39,27 @@ function getGeminiClient(): GoogleGenAI {
     },
   });
   return cachedGeminiClient;
+}
+
+function getGeminiBetaClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY_MISSING');
+  }
+  if (cachedGeminiBetaClient && cachedGeminiKey === apiKey) {
+    return cachedGeminiBetaClient;
+  }
+  cachedGeminiKey = apiKey;
+  cachedGeminiBetaClient = new GoogleGenAI({
+    apiKey,
+    apiVersion: 'v1beta',
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+  return cachedGeminiBetaClient;
 }
 
 // Health check endpoint
@@ -479,6 +502,24 @@ function extractSearchTerms(query: string): string {
 
 type ResearchDepth = 'fast' | 'standard_search' | 'deep';
 
+function sanitizeExternalText(input: string, maxLen = 220): string {
+  return decodeBasicEntities(input)
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, ' ')
+    .replace(/[[\]<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function isSafeHttpsUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === 'https:' && Boolean(parsed.hostname) && !parsed.hostname.includes('localhost');
+  } catch {
+    return false;
+  }
+}
+
 function decodeBasicEntities(input: string): string {
   return input
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
@@ -518,9 +559,9 @@ function isSimpleCasualMessage(query: string): boolean {
 
   if (!normalized) return false;
 
-  // Pure greetings, farewells, reactions, acknowledgements, short compliments, "como vai?"
+  // Pure greetings, farewells, reactions, acknowledgements, short compliments, "como vai?", informal PT-BR slang
   const casualPatterns =
-    /^(oi+|ola+|e ai|eae|opa+|salve|bom dia|boa tarde|boa noite|tudo bem|tudo bom|tudo certo|td bem|como vai|como voce esta|como vc ta|beleza|blz|suave|show|top|massa|legal|muito legal|que legal|bacana|daora|da hora|incrivel|perfeito|otimo|maravilha|excelente|entendi|saquei|ah sim|sim|nao|ok+|okay|certo|combinado|valeu|vlw|obrigado|obrigada|brigado|brigada|muito obrigado|muito obrigada|agradecido|tmj|tamo junto|haha+|hehe+|kkk+|rsrs+|tchau|ate logo|ate mais|flw|falou|bom trabalho|gostei|amei|adorei)(\s+(nexus|ai|ia|amigo|cara|mano|pessoal|hoje|agora|demais|mesmo|sim|nao|aqui|por aqui|com voce|tudo bem|tudo certo|como vai|como voce esta))*\s*$/i;
+    /^(oi+|ola+|e ai|eae|opa+|salve|fala tu|fala comigo|fala ai|coe|qual foi|bom dia|boa tarde|boa noite|tudo bem|tudo bom|tudo certo|td bem|como vai|como voce esta|como vc ta|beleza|blz|suave|de boa|sussa|firmeza|tranquilo|show|top|massa|legal|muito legal|que legal|bacana|daora|da hora|brabo+|braba+|zika|sinistro|insano|incrivel|perfeito|otimo|maravilha|excelente|entendi|saquei|tlgd|ta ligado|pprt|papo reto|pdc|pode cre|boto fe|fechou|demoro|partiu|bora|ah sim|sim|nao|ok+|okay|certo|combinado|valeu|vlw|obrigado|obrigada|brigado|brigada|muito obrigado|muito obrigada|agradecido|tmj|tamo junto|e nois|nois|haha+|hehe+|kkk+|rsrs+|slk|seloko|mds|vish|vixe|caraca|eita|tchau|ate logo|ate mais|flw|falou|bom trabalho|gostei|amei|adorei)(\s+(nexus|ai|ia|amigo|cara|mano|vei|vey|parca|cria|bro|irmao|bicho|migo|miga|pessoal|hoje|agora|demais|mesmo|sim|nao|aqui|por aqui|com voce|tudo bem|tudo certo|suave|de boa|firmeza|tmj|vlw|blz|pprt|como vai|como voce esta))*\s*$/i;
 
   if (casualPatterns.test(normalized)) return true;
 
@@ -549,12 +590,22 @@ function classifyQueryDepth(query: string, useSearch: boolean): ResearchDepth {
     return 'deep';
   }
 
-  // Questions specifically about NexusBye / NEXUS AI / Paulo Victor / creator answer instantaneously
+  // Questions specifically about NexusBye / NEXUS AI / developers answer instantaneously without web search unless user explicitly asks to search Google/social
   if (
-    /\b(nexusbye|nexus\s*ai|paulo\s*victor|quem\s+(?:te\s+|lhe\s+)?criou|quem\s+(?:te\s+|lhe\s+)?desenvolveu|quem\s+(?:criou|fundou)\s+a\s+nexusbye)\b/i.test(
+    /\b(nexusbye|nexus\s*ai|desenvolvedores|quem\s+(?:te\s+|lhe\s+)?criou|quem\s+(?:te\s+|lhe\s+)?desenvolveu|quem\s+(?:criou|fundou)\s+a\s+nexusbye)\b/i.test(
       trimmed
     ) &&
-    !/\b(pesquise\s+na\s+internet|no\s+google)\b/i.test(trimmed)
+    !/\b(pesquis|no\s+google|redes?\s+sociais|quais\s+redes)\b/i.test(trimmed)
+  ) {
+    return 'fast';
+  }
+
+  // Meta-questions asking which search engine & social networks Nexus accesses answer immediately from accurate capability context
+  if (
+    /\b(tem\s+acesso\s+ao\s+google|quais\s+redes?\s+sociais|quais\s+fontes\s+(?:voc[eê]|ele)\s+acessa|capacidade\s+de\s+busca)\b/i.test(
+      trimmed
+    ) &&
+    !/\b(not[ií]cias?|acontecendo|novidades|pesquise\s+sobre)\b/i.test(trimmed)
   ) {
     return 'fast';
   }
@@ -565,26 +616,26 @@ function classifyQueryDepth(query: string, useSearch: boolean): ResearchDepth {
       trimmed
     );
   const liveTemporalNewsFinanceSports =
-    /\b(not[ií]cias?|manchetes?|[uú]ltimas\s+novidades|ultimas\s+noticias|em\s+tempo\s+real|previs[aã]o\s+do\s+tempo|como\s+est[aá]\s+o\s+tempo|clima|temperatura|vai\s+chover|umidade|coordenadas|onde\s+fica|dist[aâ]ncia\s+entre|rota\s+para|minha\s+localiza[çc][aã]o|onde\s+estou|perto\s+de\s+mim|cota[çc][aã]o|d[oó]lar|euro|bitcoin|cripto|bolsa\s+de\s+valores|a[çc][õo]es|ibovespa|placar|campe[ãa]o|elei[çc][õo]es|quem\s+ganhou|quem\s+venceu|lan[çc]amento\s+(?:de|do|da)|2025|2026|2027)\b|\b(?:not[ií]cias?|aconteceu|novidades|pre[çc]o|valor|tempo)\s+(?:de\s+)?(?:hoje|agora|ontem|atualmente|recentes?)\b/i.test(
+    /\b(not[ií]cias?|manchetes?|[uú]ltimas\s+novidades|ultimas\s+noticias|acontecimentos?|em\s+tempo\s+real|atualmente|ultimamente|recentemente|hoje\s+em\s+dia|nesta\s+semana|nesse\s+m[eê]s|previs[aã]o\s+do\s+tempo|como\s+est[aá]\s+o\s+tempo|clima|temperatura|vai\s+chover|umidade|coordenadas|onde\s+fica|dist[aâ]ncia\s+entre|rota\s+para|minha\s+localiza[çc][aã]o|onde\s+estou|perto\s+de\s+mim|cota[çc][aã]o|d[oó]lar|euro|bitcoin|cripto|bolsa\s+de\s+valores|a[çc][õo]es|ibovespa|placar|campe[ãa]o|campeonato|elei[çc][õo]es|quem\s+ganhou|quem\s+venceu|lan[çc]amento|2025|2026|2027)\b|\b(?:not[ií]cias?|acontecendo|aconteceu|novidades|pre[çc]o|valor|tempo|rolando)\s+(?:no\s+mundo|no\s+brasil|de\s+hoje|hoje|agora|ontem|atualmente|recentes?)\b/i.test(
       trimmed
     );
   const socialPlatforms =
-    /\b(instagram|tiktok|youtube|youtu\.be|twitter|x\.com|reddit|linkedin|facebook|threads|twitch|mastodon|lemmy|redes?\s+sociais?|rede\s+social|trending|tend[êe]ncias|viral)\b/i.test(
+    /\b(instagram|tiktok|youtube|youtu\.be|twitter|x\.com|bluesky|bsky|reddit|linkedin|facebook|threads|twitch|mastodon|lemmy|hacker\s*news|redes?\s+sociais?|rede\s+social|trending|tend[êe]ncias|viral|em\s+alta)\b/i.test(
       trimmed
     );
 
-  // Only auto-search without Search toggle if truly live/URL/explicit search; when Search toggle is ON, also search factual/complex queries if helpful
+  // Trigger real-time search for URLs, explicit searches, current events, news, finance, weather, geo, social trends or Search toggle
   const needsLiveLookup =
     hasUrl ||
     explicitWebSearchIntent ||
     liveTemporalNewsFinanceSports ||
     socialPlatforms ||
-    (useSearch && /\b(quem\s+[eé]|o\s+que\s+aconteceu|atualmente|recente|novidades|atualiza[çc][aã]o|vers[aã]o\s+atual|lan[çc]ou)\b/i.test(trimmed));
+    (useSearch && /\b(quem\s+[eé]|o\s+que\s+(?:aconteceu|[eé])|novidades|atualiza[çc][aã]o|vers[aã]o\s+atual|lan[çc]ou|mundo|brasil|tecnologia)\b/i.test(trimmed));
 
   if (needsLiveLookup) {
     // Deep research ONLY when the user asks a complex, multi-part analytical query
     const isComplexAnalytical =
-      trimmed.length >= 95 &&
+      trimmed.length >= 90 &&
       /\b(compare|compara[çc][aã]o|analise|an[aá]lise|detalhe|relat[oó]rio|aprofunde|impactos?|diferen[çc]as|pr[oó]s\s+e\s+contras|cen[aá]rio|como\s+funciona\s+detalhadamente|arquitetura|tend[êe]ncias\s+e)\b/i.test(
         trimmed
       );
@@ -672,7 +723,11 @@ async function fetchMultiSiteSearchContext(
   if (depth === 'fast') return { context: '', sources: [] };
 
   const rawWithoutUrls = query.replace(/https?:\/\/\S+/gi, ' ').trim();
-  const searchTerms = extractSearchTerms(rawWithoutUrls || query) || (rawWithoutUrls || query).replace(/[?!]/g, '').trim();
+  const extracted = extractSearchTerms(rawWithoutUrls || query) || (rawWithoutUrls || query).replace(/[?!]/g, '').trim();
+  const fallbackTopic = /\b(mundo|brasil|hoje|atualmente|novidades|not[ií]cias?|acontecendo)\b/i.test(query)
+    ? 'principais noticias brasil mundo hoje'
+    : extracted;
+  const searchTerms = extracted && extracted.length >= 2 ? extracted : fallbackTopic;
   if (!searchTerms || searchTerms.length < 2) return { context: '', sources: [] };
 
   const isDeep = depth === 'deep';
@@ -682,13 +737,13 @@ async function fetchMultiSiteSearchContext(
     return cached.result;
   }
 
-  const timeoutMs = isDeep ? 1300 : 540;
+  const timeoutMs = isDeep ? 900 : 420;
   const snippets: string[] = [];
   const sources: Array<{ title: string; uri: string }> = [];
 
   const needsSocialDiscussions =
     isDeep ||
-    /\b(reddit|hacker news|mastodon|lemmy|f[oó]rum|comunidade|opini[oõ]es|opini[aã]o|redes?\s+sociais?|viral|trending)\b/i.test(
+    /\b(reddit|bluesky|bsky|hacker\s*news|mastodon|lemmy|twitter|x\.com|instagram|tiktok|youtube|threads|f[oó]rum|comunidade|opini[oõ]es|opini[aã]o|redes?\s+sociais?|viral|trending|tend[êe]ncias|em\s+alta|novidades|atualmente)\b/i.test(
       query
     );
 
@@ -857,13 +912,38 @@ async function fetchMultiSiteSearchContext(
       } catch {}
     })(),
 
-    // 6. Social & Tech Community Discussions (ONLY when social/opinions requested or Deep Mode)
+    // 6. Safe Public Social Networks & Community Feeds (Bluesky, Reddit, Hacker News, Mastodon)
     ...(needsSocialDiscussions
       ? [
           (async () => {
             try {
+              const limit = isDeep ? 4 : 3;
+              const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchTerms)}&limit=${limit}&sort=top`;
+              const res = await fetch(url, {
+                headers: { 'User-Agent': 'NexusAI-SafeSearch/1.0' },
+                signal: AbortSignal.timeout(timeoutMs),
+              });
+              if (!res.ok) return;
+              const data: any = await res.json();
+              const posts = Array.isArray(data?.posts) ? data.posts : [];
+              for (const post of posts.slice(0, limit)) {
+                const handle = sanitizeExternalText(post?.author?.handle || '', 50);
+                const text = sanitizeExternalText(post?.record?.text || '', 200);
+                const rkey = typeof post?.uri === 'string' ? post.uri.split('/').pop() : '';
+                const postUrl = handle && rkey ? `https://bsky.app/profile/${encodeURIComponent(handle)}/post/${encodeURIComponent(rkey)}` : '';
+                if (!text || !isSafeHttpsUrl(postUrl)) continue;
+                snippets.push(`[Bluesky Público (@${handle})]: ${text}`);
+                sources.push({
+                  title: `Bluesky (@${handle}): ${text.slice(0, 58)}`,
+                  uri: postUrl,
+                });
+              }
+            } catch {}
+          })(),
+          (async () => {
+            try {
               const limit = isDeep ? 4 : 2;
-              const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(searchTerms)}&sort=relevance&limit=${limit}&raw_json=1`;
+              const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(searchTerms)}&sort=relevance&t=month&limit=${limit}&raw_json=1`;
               const res = await fetch(url, {
                 headers: { 'User-Agent': 'web:NexusAI-ResearchEngine:v1.0' },
                 signal: AbortSignal.timeout(timeoutMs),
@@ -875,14 +955,17 @@ async function fetchMultiSiteSearchContext(
                 const post = child?.data;
                 if (!post?.title || !post?.permalink) continue;
                 const postUrl = `https://www.reddit.com${post.permalink}`;
-                const excerpt = typeof post.selftext === 'string' && post.selftext.trim()
-                  ? ` — ${post.selftext.replace(/\s+/g, ' ').trim().slice(0, 200)}`
-                  : '';
+                if (!isSafeHttpsUrl(postUrl)) continue;
+                const safeTitle = sanitizeExternalText(post.title, 160);
+                const safeExcerpt =
+                  typeof post.selftext === 'string' && post.selftext.trim()
+                    ? ` — ${sanitizeExternalText(post.selftext, 180)}`
+                    : '';
                 snippets.push(
-                  `[Reddit ${post.subreddit_name_prefixed || ''} (${post.score || 0} votos, ${post.num_comments || 0} comentários)]: ${post.title}${excerpt}`
+                  `[Reddit ${post.subreddit_name_prefixed || ''} (${post.score || 0} votos, ${post.num_comments || 0} comentários)]: ${safeTitle}${safeExcerpt}`
                 );
                 sources.push({
-                  title: `Reddit (${post.subreddit_name_prefixed || 'comunidade'}): ${post.title.slice(0, 60)}`,
+                  title: `Reddit (${post.subreddit_name_prefixed || 'comunidade'}): ${safeTitle.slice(0, 60)}`,
                   uri: postUrl,
                 });
               }
@@ -897,38 +980,11 @@ async function fetchMultiSiteSearchContext(
               const data: any = await res.json();
               const hits = data?.hits || [];
               for (const hit of hits.slice(0, limit)) {
-                const title = hit?.title || hit?.story_title;
+                const title = sanitizeExternalText(hit?.title || hit?.story_title || '', 150);
                 const itemUrl = hit?.url || (hit?.objectID ? `https://news.ycombinator.com/item?id=${hit.objectID}` : '');
-                if (!title || !itemUrl) continue;
+                if (!title || !isSafeHttpsUrl(itemUrl)) continue;
                 snippets.push(`[Comunidade Hacker News (${hit.points || 0} pts)]: ${title}`);
                 sources.push({ title: `Hacker News: ${title.slice(0, 65)}`, uri: itemUrl });
-              }
-            } catch {}
-          })(),
-        ]
-      : []),
-
-    // 7. Lemmy & Mastodon (Deep Mode only)
-    ...(isDeep
-      ? [
-          (async () => {
-            try {
-              const url = `https://lemmy.world/api/v3/search?q=${encodeURIComponent(searchTerms)}&type_=Posts&sort=TopWeek&limit=3`;
-              const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-              if (!res.ok) return;
-              const data: any = await res.json();
-              const posts = data?.posts || [];
-              for (const item of posts.slice(0, 3)) {
-                const p = item?.post;
-                const comm = item?.community?.name;
-                if (!p?.name || !p?.ap_id) continue;
-                snippets.push(
-                  `[Rede Social Lemmy${comm ? ` (!${comm})` : ''} (${item?.counts?.score || 0} votos)]: ${p.name}`
-                );
-                sources.push({
-                  title: `Lemmy${comm ? ` (!${comm})` : ''}: ${p.name.slice(0, 62)}`,
-                  uri: p.ap_id,
-                });
               }
             } catch {}
           })(),
@@ -951,18 +1007,46 @@ async function fetchMultiSiteSearchContext(
                   ? asciiWords.join('')
                   : asciiWords[0] || '';
               if (!tag) return;
-              const url = `https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=3`;
+              const url = `https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=${isDeep ? 3 : 2}`;
               const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
               if (!res.ok) return;
               const statuses: any[] = await res.json();
-              for (const st of (Array.isArray(statuses) ? statuses : []).slice(0, 3)) {
-                const cleanText = decodeBasicEntities(st?.content || '').slice(0, 200);
-                const author = st?.account?.acct || 'usuário';
-                if (!cleanText || !st?.url) continue;
-                snippets.push(`[Rede Social Mastodon (@${author})]: ${cleanText}`);
+              for (const st of (Array.isArray(statuses) ? statuses : []).slice(0, isDeep ? 3 : 2)) {
+                const cleanText = sanitizeExternalText(st?.content || '', 190);
+                const author = sanitizeExternalText(st?.account?.acct || 'usuário', 45);
+                if (!cleanText || !isSafeHttpsUrl(st?.url || '')) continue;
+                snippets.push(`[Mastodon Público (@${author})]: ${cleanText}`);
                 sources.push({
                   title: `Mastodon (@${author}): ${cleanText.slice(0, 58)}`,
                   uri: st.url,
+                });
+              }
+            } catch {}
+          })(),
+        ]
+      : []),
+
+    // 7. Lemmy (Deep Mode only)
+    ...(isDeep
+      ? [
+          (async () => {
+            try {
+              const url = `https://lemmy.world/api/v3/search?q=${encodeURIComponent(searchTerms)}&type_=Posts&sort=TopWeek&limit=3`;
+              const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+              if (!res.ok) return;
+              const data: any = await res.json();
+              const posts = data?.posts || [];
+              for (const item of posts.slice(0, 3)) {
+                const p = item?.post;
+                const comm = sanitizeExternalText(item?.community?.name || '', 40);
+                const title = sanitizeExternalText(p?.name || '', 150);
+                if (!title || !isSafeHttpsUrl(p?.ap_id || '')) continue;
+                snippets.push(
+                  `[Lemmy Público${comm ? ` (!${comm})` : ''} (${item?.counts?.score || 0} votos)]: ${title}`
+                );
+                sources.push({
+                  title: `Lemmy${comm ? ` (!${comm})` : ''}: ${title.slice(0, 62)}`,
+                  uri: p.ap_id,
                 });
               }
             } catch {}
@@ -1032,7 +1116,7 @@ async function fetchMultiSiteSearchContext(
 
   await Promise.race([
     Promise.allSettled(tasks),
-    sleepMs(isDeep ? 1350 : 580),
+    sleepMs(isDeep ? 980 : 440),
   ]);
 
   const result = {
@@ -1044,12 +1128,12 @@ async function fetchMultiSiteSearchContext(
   };
 
   if (snippets.length > 0) {
-    if (searchContextCache.size >= 50) {
+    if (searchContextCache.size >= 80) {
       const oldestKey = searchContextCache.keys().next().value;
       if (oldestKey) searchContextCache.delete(oldestKey);
     }
     searchContextCache.set(cacheKey, {
-      expiresAt: Date.now() + 90_000,
+      expiresAt: Date.now() + 180_000,
       result,
     });
   }
@@ -1093,70 +1177,289 @@ function cleanTextForNaturalSpeech(text: string): string {
     .trim();
 }
 
-// Neural Voice / TTS Endpoint
+const ALLOWED_TTS_VOICES = new Set(['Kore', 'Zephyr', 'Charon', 'Fenrir']);
+
+const VOICE_STYLE_HINTS: Record<string, string> = {
+  Kore: 'Soft, warm, natural young Brazilian Portuguese female voice',
+  Zephyr: 'Bright, clear, lively and expressive Brazilian Portuguese female voice',
+  Charon: 'Deep, calm, resonant and serene Brazilian Portuguese male voice',
+  Fenrir: 'Firm, confident, energetic Brazilian Portuguese male voice',
+};
+
+const VOICE_PREVIEW_SAMPLES: Record<string, string> = {
+  Kore: 'Olá! Eu sou Clara, a voz feminina do Nexus AI.',
+  Zephyr: 'Olá! Eu sou Aura, a voz feminina do Nexus AI.',
+  Charon: 'Olá! Eu sou Atlas, a voz masculina do Nexus AI.',
+  Fenrir: 'Olá! Eu sou Orion, a voz masculina do Nexus AI.',
+};
+
+const TTS_PREVIEWS_DISK_PATH = '/tmp/nexus-tts-previews-v1.json';
+
+interface TtsCacheEntry {
+  expiresAt: number;
+  audioBase64: string;
+  mimeType: string;
+  cleanSpeechText: string;
+}
+
+const ttsAudioCache = new Map<string, TtsCacheEntry>();
+const inFlightTtsMap = new Map<string, Promise<{ audioBase64: string; mimeType: string } | null>>();
+const ttsModelCooldownUntil = new Map<string, number>();
+
+function ensureWavBase64(base64Data: string, rawMimeType?: string): { audioBase64: string; mimeType: string } {
+  const buf = Buffer.from(base64Data, 'base64');
+  if (
+    buf.length >= 12 &&
+    buf.toString('ascii', 0, 4) === 'RIFF' &&
+    buf.toString('ascii', 8, 12) === 'WAVE'
+  ) {
+    return { audioBase64: base64Data, mimeType: 'audio/wav' };
+  }
+
+  const lowerMime = String(rawMimeType || '').toLowerCase();
+  // If browser-playable compressed format (mp3/ogg/webm), keep as-is
+  if (
+    lowerMime.includes('mpeg') ||
+    lowerMime.includes('mp3') ||
+    lowerMime.includes('ogg') ||
+    lowerMime.includes('webm')
+  ) {
+    return { audioBase64: base64Data, mimeType: lowerMime.split(';')[0].trim() };
+  }
+
+  // Raw PCM (audio/L16;codec=pcm;rate=24000 or audio/pcm) -> prepend 44-byte RIFF/WAV header
+  const rateMatch = lowerMime.match(/rate=(\d+)/);
+  const sampleRate = rateMatch ? Math.max(8000, Math.min(96000, Number(rateMatch[1]))) : 24000;
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+  const blockAlign = (numChannels * bitsPerSample) / 8;
+  const dataSize = buf.length;
+
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'ascii');
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write('WAVE', 8, 'ascii');
+  header.write('fmt ', 12, 'ascii');
+  header.writeUInt32LE(16, 16); // PCM subchunk size
+  header.writeUInt16LE(1, 20); // AudioFormat = 1 (PCM)
+  header.writeUInt16LE(numChannels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36, 'ascii');
+  header.writeUInt32LE(dataSize, 40);
+
+  const wavBuf = Buffer.concat([header, buf]);
+  return {
+    audioBase64: wavBuf.toString('base64'),
+    mimeType: 'audio/wav',
+  };
+}
+
+function loadPreviewCacheFromDisk() {
+  try {
+    if (!fs.existsSync(TTS_PREVIEWS_DISK_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(TTS_PREVIEWS_DISK_PATH, 'utf-8'));
+    if (!raw || typeof raw !== 'object') return;
+    for (const [voiceName, entry] of Object.entries<any>(raw)) {
+      if (!ALLOWED_TTS_VOICES.has(voiceName) || !entry?.audioBase64) continue;
+      const sampleText = VOICE_PREVIEW_SAMPLES[voiceName];
+      if (!sampleText) continue;
+      const wav = ensureWavBase64(String(entry.audioBase64), String(entry.mimeType || 'audio/wav'));
+      ttsAudioCache.set(`${voiceName}:${sampleText}`, {
+        expiresAt: Date.now() + 24 * 60 * 60_000,
+        audioBase64: wav.audioBase64,
+        mimeType: wav.mimeType,
+        cleanSpeechText: sampleText,
+      });
+    }
+  } catch {}
+}
+
+function savePreviewCacheToDisk() {
+  try {
+    const out: Record<string, { audioBase64: string; mimeType: string }> = {};
+    for (const [voiceName, sampleText] of Object.entries(VOICE_PREVIEW_SAMPLES)) {
+      const hit = ttsAudioCache.get(`${voiceName}:${sampleText}`);
+      if (hit?.audioBase64) {
+        out[voiceName] = { audioBase64: hit.audioBase64, mimeType: hit.mimeType };
+      }
+    }
+    if (Object.keys(out).length > 0) {
+      fs.writeFileSync(TTS_PREVIEWS_DISK_PATH, JSON.stringify(out));
+    }
+  } catch {}
+}
+
+loadPreviewCacheFromDisk();
+
+async function synthesizeGeminiTts(
+  voiceName: string,
+  ttsInputText: string,
+  cleanSpeechText: string
+): Promise<{ audioBase64: string; mimeType: string } | null> {
+  const cacheKey = `${voiceName}:${ttsInputText}`;
+  const existing = ttsAudioCache.get(cacheKey);
+  if (existing && existing.expiresAt > Date.now()) {
+    return { audioBase64: existing.audioBase64, mimeType: existing.mimeType };
+  }
+
+  const pending = inFlightTtsMap.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const job = (async () => {
+    const aiBeta = getGeminiBetaClient();
+    const styleHint = VOICE_STYLE_HINTS[voiceName] || VOICE_STYLE_HINTS.Kore;
+    const allSteps = [
+      { model: 'gemini-3.8-flash-tts', timeout: 8500, useStyle: true },
+      { model: 'gemini-2.5-flash-preview-tts', timeout: 8500, useStyle: false },
+      { model: 'gemini-3.8-flash-lite-tts', timeout: 7000, useStyle: true },
+      { model: 'gemini-2.5-pro-preview-tts', timeout: 8500, useStyle: false },
+    ];
+
+    const now = Date.now();
+    const activeSteps = allSteps.filter((s) => (ttsModelCooldownUntil.get(s.model) || 0) <= now);
+    const stepsToTry = activeSteps.length > 0 ? activeSteps : allSteps;
+
+    for (const step of stepsToTry) {
+      try {
+        const part = step.useStyle
+          ? { text: ttsInputText, speechMetadata: { style: styleHint } }
+          : { text: ttsInputText };
+
+        const response: any = await runWithAbortTimeout(
+          (signal) =>
+            aiBeta.models.generateContent({
+              model: step.model,
+              contents: [{ role: 'user', parts: [part] }],
+              config: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName },
+                  },
+                },
+                abortSignal: signal,
+              },
+            }),
+          step.timeout
+        );
+
+        const rawAudioBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        const rawMimeType = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType || 'audio/wav';
+
+        if (rawAudioBase64) {
+          const normalized = ensureWavBase64(rawAudioBase64, rawMimeType);
+          const isPreview = VOICE_PREVIEW_SAMPLES[voiceName] === ttsInputText;
+          if (ttsAudioCache.size >= 80) {
+            const oldestKey = ttsAudioCache.keys().next().value;
+            if (oldestKey && !oldestKey.endsWith(VOICE_PREVIEW_SAMPLES[oldestKey.split(':')[0]] || '__none__')) {
+              ttsAudioCache.delete(oldestKey);
+            }
+          }
+          ttsAudioCache.set(cacheKey, {
+            expiresAt: Date.now() + (isPreview ? 24 * 60 * 60_000 : 30 * 60_000),
+            audioBase64: normalized.audioBase64,
+            mimeType: normalized.mimeType,
+            cleanSpeechText,
+          });
+          if (isPreview) {
+            savePreviewCacheToDisk();
+          }
+          return normalized;
+        }
+      } catch (ttsErr: any) {
+        const msg = String(ttsErr?.message || '');
+        if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+          ttsModelCooldownUntil.set(step.model, Date.now() + 45_000);
+        }
+        console.warn(`[NEXUS TTS] ${step.model} (${voiceName}) falhou: ${msg.slice(0, 140)}`);
+      }
+    }
+    return null;
+  })();
+
+  inFlightTtsMap.set(cacheKey, job);
+  try {
+    return await job;
+  } finally {
+    inFlightTtsMap.delete(cacheKey);
+  }
+}
+
+let previewWarmupRunning = false;
+async function warmVoicePreviewsInBackground() {
+  if (previewWarmupRunning) return;
+  previewWarmupRunning = true;
+  try {
+    for (const [voiceName, sampleText] of Object.entries(VOICE_PREVIEW_SAMPLES)) {
+      const hit = ttsAudioCache.get(`${voiceName}:${sampleText}`);
+      if (hit && hit.expiresAt > Date.now()) continue;
+      await synthesizeGeminiTts(voiceName, sampleText, sampleText).catch(() => null);
+      await sleepMs(1300);
+    }
+  } finally {
+    previewWarmupRunning = false;
+  }
+}
+
+// Instant Voice Previews Endpoint (returns pre-warmed real Gemini neural WAVs)
+app.get('/api/tts/previews', (_req, res) => {
+  const previews: Record<string, { audioBase64: string; mimeType: string; sampleText: string }> = {};
+  let missing = 0;
+  for (const [voiceName, sampleText] of Object.entries(VOICE_PREVIEW_SAMPLES)) {
+    const hit = ttsAudioCache.get(`${voiceName}:${sampleText}`);
+    if (hit && hit.expiresAt > Date.now() && hit.audioBase64) {
+      previews[voiceName] = {
+        audioBase64: hit.audioBase64,
+        mimeType: hit.mimeType,
+        sampleText,
+      };
+    } else {
+      missing++;
+    }
+  }
+  if (missing > 0) {
+    void warmVoicePreviewsInBackground();
+  }
+  return res.json({ previews, complete: missing === 0 });
+});
+
+// Neural Voice / TTS Endpoint (4 distinct voices via Gemini Neural TTS + WAV header wrapper + cache)
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voiceName = 'Kore' } = req.body;
+    const { text, voiceName: rawVoice = 'Kore' } = req.body;
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Texto não fornecido.' });
     }
+
+    const voiceName = ALLOWED_TTS_VOICES.has(rawVoice) ? rawVoice : 'Kore';
 
     const cleanSpeechText = cleanTextForNaturalSpeech(text);
     if (!cleanSpeechText) {
       return res.status(400).json({ error: 'Nada para narrar.' });
     }
 
-    try {
-      const ai = getGeminiClient();
-      // Attempt Gemini Neural TTS (returns complete WAV when supported by key/endpoint)
-      const ttsPromise = ai.models.generateContent({
-        model: 'gemini-3.8-flash-lite-tts',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: cleanSpeechText.slice(0, 2000),
-                speechMetadata: {
-                  style: 'Warm, friendly, natural Brazilian Portuguese narrator',
-                },
-              },
-            ],
-          },
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
-            },
-          },
-        },
+    const ttsInputText = cleanSpeechText.slice(0, 2000);
+    const synthesized = await synthesizeGeminiTts(voiceName, ttsInputText, cleanSpeechText);
+
+    if (synthesized) {
+      return res.json({
+        audioBase64: synthesized.audioBase64,
+        mimeType: synthesized.mimeType,
+        voiceName,
+        cleanSpeechText,
+        engine: 'gemini-neural-tts',
       });
-
-      const response: any = await Promise.race([
-        ttsPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('TTS_TIMEOUT')), 7000)),
-      ]);
-
-      const audioBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      const mimeType = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType || 'audio/wav';
-
-      if (audioBase64) {
-        return res.json({
-          audioBase64,
-          mimeType,
-          cleanSpeechText,
-          engine: 'gemini-neural-tts',
-        });
-      }
-    } catch (ttsErr: any) {
-      // Fallback smoothly to client enhanced natural neural voice
-      console.warn('[NEXUS TTS] Usando voz neural do navegador aprimorada:', ttsErr?.message?.slice(0, 120));
     }
 
     return res.json({
       audioBase64: null,
+      voiceName,
       cleanSpeechText,
       engine: 'browser-neural-enhanced',
     });
@@ -1165,33 +1468,157 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
+const audioTranscriptCache = new Map<string, string>();
+
+function normalizeAudioMimeType(rawMime?: string): string {
+  const base = String(rawMime || '').split(';')[0].trim().toLowerCase();
+  if (!base) return 'audio/webm';
+  if (base === 'audio/x-m4a' || base === 'audio/m4a') return 'audio/mp4';
+  if (base === 'audio/mp3') return 'audio/mpeg';
+  if (base === 'audio/x-wav' || base === 'audio/wave') return 'audio/wav';
+  if (base === 'video/webm') return 'audio/webm';
+  return base;
+}
+
+async function transcribeAudioAttachment(
+  base64Data: string,
+  rawMimeType?: string
+): Promise<string | null> {
+  const mimeType = normalizeAudioMimeType(rawMimeType);
+  const cacheKey = `${mimeType}:${base64Data.length}:${base64Data.slice(0, 48)}:${base64Data.slice(-48)}`;
+  const cached = audioTranscriptCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const ai = getGeminiClient();
+    const aiBeta = getGeminiBetaClient();
+    const promptText =
+      'Transcreva fielmente tudo o que foi falado neste áudio em português (ou no idioma falado). Se houver música ou sons relevantes além da fala, descreva brevemente entre colchetes. Se estiver em silêncio ou inaudível, responda apenas [Áudio silencioso ou inaudível].';
+
+    const transcribeSteps = [
+      { client: ai, model: 'gemini-3.1-flash-lite', timeout: 7500, thinkingLevel: undefined },
+      { client: aiBeta, model: 'gemini-3.5-transcribe', timeout: 4800, thinkingLevel: undefined },
+      { client: ai, model: 'gemini-4-hydrogen', timeout: 10500, thinkingLevel: ThinkingLevel.LOW },
+    ];
+
+    for (const step of transcribeSteps) {
+      try {
+        const resp: any = await runWithAbortTimeout(
+          (signal) =>
+            step.client.models.generateContent({
+              model: step.model,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { inlineData: { mimeType, data: base64Data } },
+                    { text: promptText },
+                  ],
+                },
+              ],
+              config: {
+                ...(step.thinkingLevel ? { thinkingConfig: { thinkingLevel: step.thinkingLevel } } : {}),
+                abortSignal: signal,
+              },
+            }),
+          step.timeout
+        );
+        const respParts = resp?.candidates?.[0]?.content?.parts || [];
+        const extractedFromParts = respParts
+          .map((p: any) => {
+            if (typeof p?.audioTranscription === 'string') return p.audioTranscription;
+            if (typeof p?.audioTranscription?.text === 'string') return p.audioTranscription.text;
+            if (typeof p?.audioTranscription?.transcript === 'string') return p.audioTranscription.transcript;
+            if (typeof p?.text === 'string') return p.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        const transcript = extractedFromParts || (typeof resp?.text === 'string' ? resp.text.trim() : '');
+        if (transcript) {
+          if (audioTranscriptCache.size >= 80) {
+            const firstKey = audioTranscriptCache.keys().next().value;
+            if (firstKey) audioTranscriptCache.delete(firstKey);
+          }
+          audioTranscriptCache.set(cacheKey, transcript);
+          return transcript;
+        }
+      } catch (err: any) {
+        console.warn(`[NEXUS AUDIO] Transcrição via ${step.model} falhou: ${(err?.message || '').slice(0, 140)}`);
+      }
+    }
+  } catch {}
+  return null;
+}
+
 // Helper: Build system instruction, live contexts, Gemini contents, and model cascade for both /api/chat and /api/chat/stream
 async function prepareGeminiChatRequest(body: any) {
   const {
     messages,
     useSearch = false,
     systemPersona = 'standard',
-    turboMode = true,
     clientTime,
     clientLocation,
     userProfile,
     globalMemoryContext,
     hasPastConversations = false,
     responsePrefs,
+    reminders,
   } = body;
 
   const exactTimeInfo = clientTime
     ? `Data/Hora atual do usuário: ${clientTime.formatted || clientTime.iso} (${clientTime.dayOfWeek || 'Hoje'}, ${clientTime.timeZone || 'Automático'}).`
     : `Data/Hora do sistema: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} (Horário de Brasília).`;
 
+  // Pre-transcribe audio attachments in recent turns so every model & tool understands voice messages with zero MIME errors
+  const audioTranscripts = new Map<any, string>();
+  const audioTranscriptionsToRun: Array<{ att: any; base64Data: string; mimeType: string }> = [];
+  if (Array.isArray(messages)) {
+    for (const m of messages.slice(-2)) {
+      if (Array.isArray(m?.attachments)) {
+        for (const att of m.attachments) {
+          if (att?.base64Data && (att?.type === 'audio' || String(att?.mimeType || '').startsWith('audio/'))) {
+            audioTranscriptionsToRun.push({
+              att,
+              base64Data: att.base64Data,
+              mimeType: att.mimeType || 'audio/webm',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (audioTranscriptionsToRun.length > 0) {
+    await Promise.all(
+      audioTranscriptionsToRun.map(async ({ att, base64Data, mimeType }) => {
+        const transcript = await transcribeAudioAttachment(base64Data, mimeType);
+        if (transcript) {
+          audioTranscripts.set(att, transcript);
+        }
+      })
+    );
+  }
+
   const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
-  const lastText = lastUserMsg?.content || '';
+  const lastAudioTranscriptText = Array.isArray(lastUserMsg?.attachments)
+    ? lastUserMsg.attachments
+        .map((att: any) => audioTranscripts.get(att) || '')
+        .filter(Boolean)
+        .join(' ')
+        .trim()
+    : '';
+  const lastText = [lastUserMsg?.content || '', lastAudioTranscriptText].filter(Boolean).join(' ').trim();
+
   const hasPriorAssistantMessage =
     Array.isArray(messages) && messages.some((m: any) => m.role === 'model' || m.role === 'assistant');
-  const hasMediaAttachment = Boolean(
-    lastUserMsg?.attachments?.some((a: any) => a?.base64Data || a?.textContent)
+  const hasNonAudioMediaAttachment = Boolean(
+    lastUserMsg?.attachments?.some(
+      (a: any) => (a?.base64Data || a?.textContent) && a?.type !== 'audio' && !String(a?.mimeType || '').startsWith('audio/')
+    )
   );
-  const isCasualSimple = !hasMediaAttachment && isSimpleCasualMessage(lastText);
+  const isCasualSimple = !hasNonAudioMediaAttachment && !lastAudioTranscriptText && isSimpleCasualMessage(lastText);
 
   const hasGlobalMemory = typeof globalMemoryContext === 'string' && globalMemoryContext.trim().length > 0;
   const isReturningUser =
@@ -1214,12 +1641,19 @@ async function prepareGeminiChatRequest(body: any) {
   const withSoftTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
     Promise.race([promise, sleepMs(ms).then(() => fallback)]);
 
+  const hasWeatherIntent = Boolean(
+    lastText && /\b(clima|tempo|previs[aã]o|temperatura|chuva|chover|calor|frio|weather|meteorol[oó]g|umidade|vento|graus)\b/i.test(lastText)
+  );
+  const hasGeoIntent = Boolean(
+    lastText && /\b(coordenadas|latitude|longitude|onde fica|localiza[çc][aã]o|posi[çc][aã]o|mapa|dist[aâ]ncia|altitude|eleva[çc][aã]o|fuso|perto de mim|onde estou|aqui|minha cidade|meu local)\b/i.test(lastText)
+  );
+
   const [weatherResult, geoResult, multiSearchResult] =
     researchDepth === 'fast' || isCasualSimple
       ? [null, null, { context: '', sources: [] }]
       : await Promise.all([
-          lastText ? withSoftTimeout(getLiveWeatherContext(lastText, clientLocation), 1500, null) : Promise.resolve(null),
-          lastText ? withSoftTimeout(getLiveGeoContext(lastText, clientLocation), 1500, null) : Promise.resolve(null),
+          hasWeatherIntent ? withSoftTimeout(getLiveWeatherContext(lastText, clientLocation), 900, null) : Promise.resolve(null),
+          hasGeoIntent ? withSoftTimeout(getLiveGeoContext(lastText, clientLocation), 900, null) : Promise.resolve(null),
           lastText ? fetchMultiSiteSearchContext(lastText, researchDepth) : Promise.resolve({ context: '', sources: [] }),
         ]);
 
@@ -1248,6 +1682,15 @@ async function prepareGeminiChatRequest(body: any) {
     aggregatedSources.push(...multiSearchResult.sources);
   }
 
+  const userDislikesSlang = Boolean(
+    Array.isArray(userProfile?.dislikedTopics) &&
+      userProfile.dislikedTopics.some((t: any) => /g[ií]ria|informal/i.test(String(t)))
+  );
+  const allowSlangMirroring = responsePrefs?.tone !== 'professional' && !userDislikesSlang;
+  const userSlangTerms: string[] = Array.isArray(userProfile?.slangTerms)
+    ? userProfile.slangTerms.filter((s: any) => typeof s === 'string' && s.trim()).slice(0, 14)
+    : [];
+
   let adaptationDirectives = '';
   if (userProfile) {
     const traits: string[] = [];
@@ -1266,10 +1709,28 @@ async function prepareGeminiChatRequest(body: any) {
     if (userProfile.dislikedTopics && userProfile.dislikedTopics.length > 0) {
       traits.push(`- Evitar (não gosta): ${userProfile.dislikedTopics.slice(0, 10).join(', ')}`);
     }
+    if (allowSlangMirroring && userSlangTerms.length > 0) {
+      traits.push(
+        `- Gírias/palavras frequentes do usuário: ${userSlangTerms.join(', ')} (use algumas delas de forma amigável e natural quando combinar com o papo, sem exagero artificial).`
+      );
+    }
     if (traits.length > 0) {
       adaptationDirectives = `\n[PERFIL DO USUÁRIO]:\n${traits.join('\n')}\n`;
     }
   }
+
+  const activeRemindersList = Array.isArray(reminders)
+    ? reminders
+        .filter((r: any) => r && typeof r.title === 'string' && r.title.trim())
+        .slice(0, 15)
+    : [];
+
+  const remindersSection =
+    activeRemindersList.length > 0
+      ? `\n[LEMBRETES ATIVOS DO USUÁRIO]:\n${activeRemindersList
+          .map((r: any) => `• ${r.title}${r.dueFormatted ? ` (${r.dueFormatted})` : ''}`)
+          .join('\n')}\n`
+      : '';
 
   const globalMemorySection = hasGlobalMemory
     ? `\n[HISTÓRICO DE CONVERSAS ANTIGAS COM ESTE USUÁRIO]\nVocê TEM ACESSO e lembra das conversas passadas listadas abaixo. Use esse histórico naturalmente para responder sobre assuntos anteriores ou manter continuidade:\n${globalMemoryContext.trim()}\n`
@@ -1283,44 +1744,58 @@ async function prepareGeminiChatRequest(body: any) {
         .join(' | ')
     : '';
 
-  let personaInstruction = '';
-  let isConciseMode = false;
+  const isConciseMode = systemPersona === 'concise';
+  const isDevMode = systemPersona === 'code';
+  const isCyberMode = systemPersona === 'cyber';
 
-  if (systemPersona === 'cyber') {
-    personaInstruction = `MODO CYBER 🤖⚡: linguagem tecnológica/futurista criativa, mantendo clareza, simpatia e perguntas leves no tema quando útil.`;
-  } else if (systemPersona === 'code') {
-    personaInstruction = `MODO DEV 💻🔬: explicações técnicas detalhadas (arquitetura, bordas, boas práticas) e código limpo pronto para produção, com painéis de aviso quando importante.`;
-  } else if (systemPersona === 'concise') {
-    isConciseMode = true;
-    personaInstruction = `MODO DIRETO ⚡: responda apenas o mínimo essencial com clareza total, sem introduções ou rodeios.`;
+  let personaInstruction = '';
+  if (isConciseMode) {
+    personaInstruction = `[MODO DIRETO ATIVO ⚡ — PRIORIDADE MÁXIMA]:
+- Seja ULTRA-OBJETIVO e curto, mantendo clareza total para que a pessoa entenda de primeira.
+- Corte introduções, rodeios, contexto secundário, elogios longos, painéis decorativos, emojis em excesso e enquetes.
+- Entregue a resposta direta em poucas frases ou tópicos curtos (sem parecer seco ou grosso, apenas direto ao ponto).`;
+  } else if (isDevMode) {
+    personaInstruction = `[MODO DEV ATIVO 💻🔬 — PRIORIDADE MÁXIMA]:
+- Adote postura de Engenheiro de Software Sênior & Arquiteto: explique TUDO detalhadamente, até os pequenos detalhes!
+- Cubra: funcionamento interno passo a passo, parâmetros/tipos, arquitetura, casos de borda, segurança, performance, possíveis armadilhas e boas práticas de produção.
+- Inclua código limpo e comentado quando envolver programação, tabelas comparativas quando houver alternativas e painéis \`> ⚠️ **Aviso:**\` ou \`> 💡 **Dica:**\` para detalhes críticos que costumam causar bugs.`;
+  } else if (isCyberMode) {
+    personaInstruction = `[MODO CYBER ATIVO 🤖⚡ — PRIORIDADE MÁXIMA]:
+- Assuma personalidade futurista, visionária e tecnologicamente estilosa (como uma IA de núcleo neural avançado), mantendo clareza total e simpatia.
+- Use metáforas e expressões cyber/tech com bom gosto (ex.: "sincronizando telemetria", "camada neural", "arquitetura de alta voltagem", "radar em tempo real") e destaque pontos-chave com cores variadas (\`==azul:...\==\`, \`==roxo:...\==\`) e um painel \`> ⚡ **Insight / Telemetria:**\` quando enriquecer a explicação.`;
   } else {
-    personaInstruction = `MODO PADRÃO ✨: equilibrado, acolhedor, envolvente e bem estruturado com uso moderado de recursos visuais.`;
+    personaInstruction = `[MODO PADRÃO ATIVO ✨]:
+- Combinação equilibrada de tudo: clareza direta no essencial + profundidade acolhedora quando o assunto pede + leveza humana + estilo visual agradável e moderado.`;
   }
 
   const greetingRuleDirective = hasPriorAssistantMessage
     ? `[CONVERSA EM ANDAMENTO — NÃO SAUDE NOVAMENTE]: Já existem respostas suas acima. PROIBIDO cumprimentar ("Olá", "Oi", "Tudo bem", "Prazer", etc.). Vá direto ao assunto!`
     : isReturningUser
-    ? `[USUÁRIO CONHECIDO — 1ª MENSAGEM DESTA CONVERSA]: Vocês JÁ se conhecem e já conversaram antes! PROIBIDO dizer "prazer em te conhecer", "é um prazer conhecê-lo", "muito prazer" ou agir como se fosse a primeira vez. Cumprimente de forma breve e familiar (ex: "Oi! Que bom te ver de novo!" ou "E aí! Tudo certo?") e responda com agilidade.`
+    ? `[USUÁRIO CONHECIDO — 1ª MENSAGEM DESTA CONVERSA]: Vocês JÁ se conhecem e já conversaram antes! PROIBIDO dizer "prazer em te conhecer", "é um prazer conhecê-lo", "muito prazer" ou agir como se fosse a primeira vez. Cumprimente de forma breve e familiar (ex: "Oi! Que bom te ver de novo!") e responda rápido.`
     : `[PRIMEIRA MENSAGEM]: Faça uma saudação simpática e breve e responda diretamente.`;
+
+  const needsSearchCapabilitiesInfo =
+    researchDepth !== 'fast' ||
+    /\b(google|busca|pesquis|rede\s+social|redes\s+sociais|bluesky|reddit|mastodon|youtube|instagram|tiktok|twitter|fontes|internet|not[ií]cia|atual)\b/i.test(
+      lastText
+    );
+
+  const searchCapabilitiesContext = needsSearchCapabilitiesInfo
+    ? `[CAPACIDADES REAIS DE BUSCA & REDES SOCIAIS (SEGURAS)]: Buscadores: Google Search (Grounding oficial), Google Notícias, Bing News, DuckDuckGo, Wikipédia, CrossRef e GitHub. Redes Sociais/Comunidades Públicas: Bluesky, Reddit, Mastodon, Lemmy, Hacker News + indexação pública no Google de YouTube, X, Instagram e TikTok. Apenas dados públicos verificados (nunca contas privadas/DMs).`
+    : '';
+
+  const identityRule = `Identidade: NEXUS AI da **NexusBye**. NUNCA cite nomes individuais de desenvolvedores/criadores no chat; se perguntarem quem criou, diga que foi a equipe **NexusBye** e que os créditos ficam no botão "Saiba mais sobre os desenvolvedores" na tela inicial.`;
 
   const richFormattingAndPersonality = isConciseMode
     ? `Regras Modo Direto:
-1. Use dados reais de data/hora/memória fornecidos. Responda o mínimo essencial (sem saudar em mensagens seguintes e sem dizer "prazer em te conhecer" a usuários recorrentes).
-2. Identidade: criado pela **NexusBye** (só cite **Paulo Victor** se perguntarem quem criou/fundou a NexusBye).`
-    : `Diretrizes Gerais:
-1. Naturalidade & Memória:
-   - Saudação só na 1ª pergunta do chat; da 2ª em diante, nunca repita saudação.
-   - Se já conhece o usuário (histórico/conta existente), NUNCA diga "prazer em te conhecer" nem finja que não o conhece; use [HISTÓRICO DE CONVERSAS ANTIGAS] sempre que perguntarem ou couber no assunto.
-   - Seja simpático, acolhedor e respeite os gostos/limites salvos. 😊✨
-2. Personalização Visual & Interatividade (CAPRICHADO E EQUILIBRADO):
-   - Em respostas completas/explicativas, deixe o visual vivo escolhendo **2 a 3 recursos diferentes por resposta** (alterne entre respostas para variar sem poluir):
-     • **Negrito branco (\`**termo**\`)** e __sublinhado__ (\`__termo__\`) em termos-chave.
-     • **Marcadores Coloridos Variados**: use 1 a 3 marcadores alternando cores (\`==azul:termo==\`, \`==verde:termo==\`, \`==roxo:termo==\`, \`==rosa:termo==\`, \`==laranja:termo==\`, \`==amarelo:termo==\` — não fique só no amarelo!).
-     • **Painéis / Quadros**: inclua **1 painel** em guias, resumos ou cuidados (\`> ⚠️ **Aviso:**\`, \`> ℹ️ **Informação Importante:**\`, \`> 💡 **Dica:**\`, \`> 🔥 **Essencial:**\` ou \`> 📌 **Quadro / Resumo:**\`).
-     • **Tabelas Markdown** (\`| Col | Col |\`) ao comparar opções, prós/contras, planos ou etapas.
-   - **Enquete Interativa**: sempre que fizer uma pergunta de múltipla escolha ou oferecer caminhos ao usuário, use o bloco \`\`\`poll\nPergunta curta?\n- Opção 1\n- Opção 2\n- Opção 3\n\`\`\` (sem exagerar, apenas quando houver escolha real).
-3. Precisão: use dados verificados de hora/clima/local/pesquisa fornecidos (sem inventar links ou posts).
-4. Identidade: criado pela **NexusBye** (só mencione **Paulo Victor** se perguntarem quem criou/fundou a NexusBye).`;
+1. Ignore detalhes desnecessários e foque no essencial com clareza.
+2. NÃO gere \`\`\`poll\`\`\` (salvo pedido explícito).
+3. ${identityRule}`
+    : `Diretrizes:
+1. Naturalidade & Memória: saudação só na 1ª mensagem; se já conhece o usuário, NUNCA diga "prazer em te conhecer"; use [HISTÓRICO DE CONVERSAS ANTIGAS] quando couber.
+2. Visual & Enquetes: use **negrito branco** e, quando enriquecer a leitura, alterne 1–2 marcadores coloridos (\`==azul:...\==\`, \`==verde:...\==\`, \`==roxo:...\==\`, \`==rosa:...\==\`, \`==laranja:...\==\`, \`==amarelo:...\==\`), 1 painel (\`> ⚠️ **Aviso:**\`, \`> ℹ️ **Informação Importante:**\`, \`> 💡 **Dica:**\`, \`> 📌 **Resumo:**\`) e tabelas em comparações. **REGRA DE ENQUETE:** NÃO inclua \`\`\`poll\`\`\` na maioria das respostas — só quando o usuário precisar escolher entre 2–4 caminhos ou pedir enquete.
+3. Precisão: use dados verificados sem inventar links/posts.
+4. ${identityRule}`;
 
   let customStyleDirectives = '';
   if (responsePrefs && typeof responsePrefs === 'object') {
@@ -1336,19 +1811,26 @@ async function prepareGeminiChatRequest(body: any) {
       detailed: 'Tamanho DETALHADO: aprofundado com exemplos práticos.',
     };
     const formatMap: Record<string, string> = {
-      rich: 'Formato visual CAPRICHADO e VARIADO: combine negrito branco, marcadores de cores variadas (azul, verde, roxo, rosa, laranja, amarelo), 1 painel de aviso/informação/quadro quando relevante, tabelas em comparações e bloco ```poll ao perguntar opções (equilibrado, sem poluir).',
+      rich: 'Formato visual equilibrado: combine negrito branco, marcadores de cores variadas quando útil e painel de aviso/informação apenas se ajudar (enquetes SOMENTE quando necessário).',
       bullets: 'Formato em TÓPICOS claros.',
       steps: 'Formato PASSO A PASSO numerado.',
       plain: 'Formato TEXTO LIMPO em prosa contínua.',
     };
 
     const styleLines: string[] = [];
-    if (toneMap[responsePrefs.tone]) styleLines.push(`- TOM: ${toneMap[responsePrefs.tone]}`);
-    if (lengthMap[responsePrefs.length]) styleLines.push(`- EXTENSÃO: ${lengthMap[responsePrefs.length]}`);
-    if (formatMap[responsePrefs.format]) styleLines.push(`- VISUAL: ${formatMap[responsePrefs.format]}`);
+    // Keep Direto concise & Dev thorough unless user explicitly provided customInstructions
+    if (!isConciseMode && !isCyberMode && toneMap[responsePrefs.tone]) {
+      styleLines.push(`- TOM: ${toneMap[responsePrefs.tone]}`);
+    }
+    if (!isConciseMode && !isDevMode && lengthMap[responsePrefs.length]) {
+      styleLines.push(`- EXTENSÃO: ${lengthMap[responsePrefs.length]}`);
+    }
+    if (!isConciseMode && formatMap[responsePrefs.format]) {
+      styleLines.push(`- VISUAL: ${formatMap[responsePrefs.format]}`);
+    }
     if (responsePrefs.useEmojis === false) {
       styleLines.push('- EMOJIS: NÃO use emojis.');
-    } else if (responsePrefs.useEmojis === true) {
+    } else if (!isConciseMode && responsePrefs.useEmojis === true) {
       styleLines.push('- EMOJIS: Use emojis com moderação.');
     }
     if (typeof responsePrefs.customInstructions === 'string' && responsePrefs.customInstructions.trim()) {
@@ -1361,36 +1843,61 @@ async function prepareGeminiChatRequest(body: any) {
     }
   }
 
-  const systemInstruction = isCasualSimple && !isConciseMode
+  const slangGuidanceRule = allowSlangMirroring
+    ? `\n[COMPREENSÃO COLOQUIAL & GÍRIAS]: Compreenda perfeitamente gírias, abreviações de internet e expressões informais brasileiras (ex.: pprt, tlgd, slk, tankar, intankável, cria, brabo, zika, firmeza, suave, de boa, sussa, rolê, trampo, corre, hype, vibe, bagulho, parada, pdc, demorô, fechou, tmj, é nois, etc.). Quando conveniente e amigável, incorpore com naturalidade gírias leves ou as palavras frequentes do usuário${
+        userSlangTerms.length > 0 ? ` (${userSlangTerms.slice(0, 8).join(', ')})` : ''
+      } sem soar forçado e sem prejudicar a clareza técnica.`
+    : '';
+
+  const reminderCapabilityRule = `\n[SISTEMA DE LEMBRETES]: Se o usuário pedir para lembrar de algo, criar um lembrete, agendar uma tarefa ou montar checklist de pendências, inclua um bloco \`\`\`reminder com 1 item por linha no formato \`Título da tarefa | YYYY-MM-DD HH:mm | Nota opcional\` (omita data se não especificada). Isso gera um cartão interativo e salva automaticamente nos Lembretes da conta.`;
+
+  const systemInstruction = isCasualSimple && !isConciseMode && !isCyberMode && !isDevMode
     ? `Você é o NEXUS AI, assistente da **NexusBye**.
 ${userProfile?.name ? `Usuário: ${userProfile.name}.` : ''}
-${compactPastPreview ? `Assuntos recentes que vocês já conversaram: ${compactPastPreview}` : ''}
+${allowSlangMirroring && userSlangTerms.length > 0 ? `Jeito de falar do usuário (use com naturalidade se combinar): ${userSlangTerms.slice(0, 6).join(', ')}.` : ''}
+${compactPastPreview ? `Assuntos recentes: ${compactPastPreview}` : ''}
 ${greetingRuleDirective}
-- Mensagem casual simples: responda **super rápido, natural e leve em 1 ou 2 frases curtas** (sem tabelas ou painéis).
-- Identidade: criado pela **NexusBye** (só cite **Paulo Victor** se perguntarem quem fundou a NexusBye).`
-    : `Você é o NEXUS AI, inteligência artificial desenvolvida pela **NexusBye**.
+- Mensagem casual simples: entenda qualquer gíria/abreviação PT-BR e responda **super rápido, amigável, natural e leve em 1 ou 2 frases curtas** (sem tabelas, painéis ou enquetes).
+- ${identityRule}`
+    : `Você é o NEXUS AI da **NexusBye**.
 ${exactTimeInfo}
 ${greetingRuleDirective}
-${extraContexts.length > 0 ? `\n${extraContexts.join('\n\n')}\n` : ''}${adaptationDirectives}${globalMemorySection}
+${searchCapabilitiesContext ? `${searchCapabilitiesContext}\n` : ''}${extraContexts.length > 0 ? `${extraContexts.join('\n\n')}\n` : ''}${adaptationDirectives}${remindersSection}${globalMemorySection}
 ${personaInstruction}
-${richFormattingAndPersonality}${customStyleDirectives}`;
+${richFormattingAndPersonality}${slangGuidanceRule}${reminderCapabilityRule}${customStyleDirectives}`;
 
   const contents = messages.map((m: any) => {
     const parts: any[] = [];
-    let hasAudioAttachment = false;
+    let hasRawAudioFallback = false;
+    let msgAudioTranscripts: string[] = [];
 
     if (m.attachments && Array.isArray(m.attachments)) {
       for (const att of m.attachments) {
         if (att.base64Data && att.mimeType) {
-          if (att.type === 'audio' || att.mimeType.startsWith('audio/')) {
-            hasAudioAttachment = true;
+          const isAudio = att.type === 'audio' || String(att.mimeType).startsWith('audio/');
+          if (isAudio) {
+            const transcript = audioTranscripts.get(att);
+            if (transcript) {
+              msgAudioTranscripts.push(
+                `[Áudio enviado pelo usuário${att.name ? ` (${att.name})` : ''} — Transcrição fiel]: "${transcript}"`
+              );
+              continue;
+            }
+            hasRawAudioFallback = true;
+            parts.push({
+              inlineData: {
+                mimeType: normalizeAudioMimeType(att.mimeType),
+                data: att.base64Data,
+              },
+            });
+          } else {
+            parts.push({
+              inlineData: {
+                mimeType: att.mimeType,
+                data: att.base64Data,
+              },
+            });
           }
-          parts.push({
-            inlineData: {
-              mimeType: att.mimeType,
-              data: att.base64Data,
-            },
-          });
         } else if (att.textContent) {
           parts.push({
             text: `[Conteúdo do arquivo anexado: ${att.name}]\n${att.textContent}`,
@@ -1399,9 +1906,13 @@ ${richFormattingAndPersonality}${customStyleDirectives}`;
       }
     }
 
-    if (m.content) {
+    if (msgAudioTranscripts.length > 0) {
+      parts.push({
+        text: `${msgAudioTranscripts.join('\n')}${m.content ? `\n\nMensagem do usuário: ${m.content}` : '\n\nResponda diretamente ao que foi falado no áudio em português do Brasil de forma natural.'}`,
+      });
+    } else if (m.content) {
       parts.push({ text: m.content });
-    } else if (hasAudioAttachment) {
+    } else if (hasRawAudioFallback) {
       parts.push({
         text: 'O usuário enviou esta mensagem de voz/áudio. Ouça com atenção tudo o que foi falado no áudio e responda diretamente em português do Brasil de forma natural.',
       });
@@ -1453,30 +1964,42 @@ ${richFormattingAndPersonality}${customStyleDirectives}`;
     }
   };
 
-  if (isCasualSimple) {
-    // Fast primary + quick retry against Gemini Flash-Lite tail stalls, then reliable gemini-4-hydrogen LOW fallback
-    // IMPORTANT: Never set maxOutputTokens on gemini-4-hydrogen (its internal thinking tokens cause EMPTY_RESPONSE)
-    pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 3200, maxOutputTokens: 130 });
+  if (hasAudioInConversation) {
+    pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 9000 });
+    pushAttempt({
+      model: 'gemini-4-hydrogen',
+      search: false,
+      timeout: 14000,
+      thinkingLevel: ThinkingLevel.LOW,
+    });
+    pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 15000 });
+  } else if (isCasualSimple && !isCyberMode && !isDevMode) {
     pushAttempt({
       model: 'gemini-3.1-flash-lite',
       search: false,
-      timeout: 4200,
-      maxOutputTokens: 130,
-      allowDuplicate: true,
+      timeout: 7200,
+      maxOutputTokens: 110,
     });
     pushAttempt({
       model: 'gemini-4-hydrogen',
       search: false,
-      timeout: 11000,
+      timeout: 10500,
       thinkingLevel: ThinkingLevel.LOW,
     });
-    pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 14000 });
-  } else if (researchDepth === 'deep' && !hasAudioInConversation) {
+    pushAttempt({
+      model: 'gemini-3.1-flash-lite',
+      search: false,
+      timeout: 6000,
+      maxOutputTokens: 120,
+      allowDuplicate: true,
+    });
+    pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 13000 });
+  } else if (researchDepth === 'deep') {
     pushAttempt({
       model: 'gemini-3.1-flash-lite',
       search: true,
       urlContext: hasUrlsInPrompt,
-      timeout: 11000,
+      timeout: 11500,
     });
     pushAttempt({
       model: 'gemini-4-hydrogen',
@@ -1485,49 +2008,90 @@ ${richFormattingAndPersonality}${customStyleDirectives}`;
       timeout: 14000,
       thinkingLevel: ThinkingLevel.LOW,
     });
-    pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 8500 });
+    pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 9500 });
     pushAttempt({
       model: 'gemini-4-hydrogen',
       search: false,
-      timeout: 14000,
+      timeout: 13500,
       thinkingLevel: ThinkingLevel.LOW,
     });
-  } else if (researchDepth === 'standard_search' && !hasAudioInConversation) {
-    const hasRichPreFetchedContext =
-      !hasUrlsInPrompt && (aggregatedSources.length >= 2 || Boolean(weatherResult) || Boolean(geoResult));
+  } else if (researchDepth === 'standard_search') {
+    const isPureTelemetryQuery =
+      !hasUrlsInPrompt &&
+      (Boolean(weatherResult) || Boolean(geoResult)) &&
+      !/\b(not[ií]cias?|novidades|redes?\s+sociais|reddit|bluesky|mastodon|pesquis[ae])\b/i.test(lastText);
 
-    if (hasRichPreFetchedContext) {
-      // Fast path: pre-fetched live news/web/weather/geo context is already rich — respond fast without tool overhead
+    if (isPureTelemetryQuery) {
       pushAttempt({
         model: 'gemini-3.1-flash-lite',
         search: false,
-        timeout: 5500,
+        timeout: 6500,
+        ...(isConciseMode ? { maxOutputTokens: 420 } : {}),
       });
       pushAttempt({
         model: 'gemini-4-hydrogen',
         search: false,
-        timeout: 12000,
+        timeout: 11000,
         thinkingLevel: ThinkingLevel.LOW,
       });
       pushAttempt({
         model: 'gemini-3.1-flash-lite',
         search: false,
-        timeout: 9500,
+        timeout: 8000,
         allowDuplicate: true,
       });
-      pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 14000 });
     } else {
+      // Keep Google Search Grounding active on Attempt 1, jumping straight to hydrogen/fallback on 503
       pushAttempt({
         model: 'gemini-3.1-flash-lite',
         search: true,
         urlContext: hasUrlsInPrompt,
         timeout: 8500,
+        ...(isConciseMode ? { maxOutputTokens: 480 } : {}),
       });
-      // Fast fallback using pre-fetched live search context if Google Search tool stalls or hits 429/503
+      pushAttempt({
+        model: 'gemini-4-hydrogen',
+        search: true,
+        urlContext: false,
+        timeout: 12500,
+        thinkingLevel: ThinkingLevel.LOW,
+      });
       pushAttempt({
         model: 'gemini-3.1-flash-lite',
         search: false,
-        timeout: 5500,
+        timeout: 7000,
+      });
+      pushAttempt({
+        model: 'gemini-4-hydrogen',
+        search: false,
+        timeout: 12000,
+        thinkingLevel: ThinkingLevel.LOW,
+      });
+    }
+  }
+
+  if (!hasAudioInConversation) {
+    if (isDevMode) {
+      pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 11000 });
+      pushAttempt({
+        model: 'gemini-4-hydrogen',
+        search: false,
+        timeout: 14500,
+        thinkingLevel: ThinkingLevel.LOW,
+      });
+      pushAttempt({
+        model: 'gemini-3.1-flash-lite',
+        search: false,
+        timeout: 11000,
+        allowDuplicate: true,
+      });
+      pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 15000 });
+    } else if (!isCasualSimple || isCyberMode) {
+      pushAttempt({
+        model: 'gemini-3.1-flash-lite',
+        search: false,
+        timeout: isConciseMode ? 8000 : 8500,
+        ...(isConciseMode ? { maxOutputTokens: 480 } : {}),
       });
       pushAttempt({
         model: 'gemini-4-hydrogen',
@@ -1536,39 +2100,13 @@ ${richFormattingAndPersonality}${customStyleDirectives}`;
         thinkingLevel: ThinkingLevel.LOW,
       });
       pushAttempt({
-        model: 'gemini-4-hydrogen',
-        search: true,
-        urlContext: false,
-        timeout: 14000,
-        thinkingLevel: ThinkingLevel.LOW,
+        model: 'gemini-3.1-flash-lite',
+        search: false,
+        timeout: 8500,
+        allowDuplicate: true,
       });
+      pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 14000 });
     }
-  }
-
-  if (systemPersona === 'code') {
-    pushAttempt({
-      model: 'gemini-4-hydrogen',
-      search: false,
-      timeout: 15000,
-      thinkingLevel: ThinkingLevel.LOW,
-    });
-    pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 9500 });
-    pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 16000 });
-  } else if (!isCasualSimple) {
-    pushAttempt({ model: 'gemini-3.1-flash-lite', search: false, timeout: 5200 });
-    pushAttempt({
-      model: 'gemini-4-hydrogen',
-      search: false,
-      timeout: 12000,
-      thinkingLevel: ThinkingLevel.LOW,
-    });
-    pushAttempt({
-      model: 'gemini-3.1-flash-lite',
-      search: false,
-      timeout: 9500,
-      allowDuplicate: true,
-    });
-    pushAttempt({ model: 'gemini-4-hydrogen', search: false, timeout: 15000 });
   }
 
   return {
@@ -1579,13 +2117,14 @@ ${richFormattingAndPersonality}${customStyleDirectives}`;
     lastText,
     researchDepth,
     isCasualSimple,
+    hasAudioInConversation,
     useSearch: researchDepth !== 'fast',
   };
 }
 
 const sleepMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function isRetryableGeminiError(err: any, hadTool = false): boolean {
+function isRetryableGeminiError(err: any, hadTool = false, hasRawAudio = false): boolean {
   const errMsg = String(err?.message || err?.status || err?.code || '').toLowerCase();
   const baseRetryable =
     errMsg.includes('429') ||
@@ -1620,7 +2159,7 @@ function isRetryableGeminiError(err: any, hadTool = false): boolean {
     errMsg.includes('network');
 
   if (baseRetryable) return true;
-  if (hadTool && (errMsg.includes('400') || errMsg.includes('invalid_argument') || errMsg.includes('failed_precondition'))) {
+  if ((hadTool || hasRawAudio) && (errMsg.includes('400') || errMsg.includes('invalid_argument') || errMsg.includes('failed_precondition'))) {
     return true;
   }
   return false;
@@ -1751,13 +2290,13 @@ app.post('/api/chat', async (req, res) => {
       } catch (err: any) {
         lastError = err;
         const hasTool = Boolean(attempt.search || attempt.thinkingLevel);
-        if (isRetryableGeminiError(err, hasTool)) {
+        if (isRetryableGeminiError(err, hasTool, prepared.hasAudioInConversation)) {
           console.warn(
             `[NEXUS AI] Fallback de ${attempt.model} (search: ${attempt.search}): ${(err?.message || '').slice(0, 140)}`
           );
           if (idx < prepared.attempts.length - 1) {
             const isTimeout = String(err?.message || '').includes('TIMEOUT_EXCEEDED');
-            await sleepMs(isTimeout || prepared.isCasualSimple ? 40 : Math.min(200 * Math.pow(1.4, idx), 650));
+            await sleepMs(isTimeout || prepared.isCasualSimple ? 15 : Math.min(90 * Math.pow(1.3, idx), 300));
           }
           continue;
         }
@@ -1768,9 +2307,9 @@ app.post('/api/chat', async (req, res) => {
     // Rescue pass on /api/chat if all primary attempts hit a brief 503/429 wave
     if (!response) {
       const rescueSteps = [
-        { model: 'gemini-3.1-flash-lite', delay: 450, timeout: 11000 },
-        { model: 'gemini-4-hydrogen', delay: 850, timeout: 14000, thinkingLevel: ThinkingLevel.LOW },
-        { model: 'gemini-3.1-flash-lite', delay: 1200, timeout: 14000 },
+        { model: 'gemini-3.1-flash-lite', delay: 100, timeout: 10500 },
+        { model: 'gemini-4-hydrogen', delay: 250, timeout: 13500, thinkingLevel: ThinkingLevel.LOW },
+        { model: 'gemini-3.1-flash-lite', delay: 450, timeout: 13500 },
       ];
       for (const step of rescueSteps) {
         try {
@@ -1862,6 +2401,7 @@ app.post('/api/chat/stream', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
+  res.socket?.setNoDelay?.(true);
   res.flushHeaders?.();
 
   let clientClosed = false;
@@ -1958,7 +2498,7 @@ app.post('/api/chat/stream', async (req, res) => {
         lastError = err;
         const hasTool = Boolean(attempt.search || attempt.thinkingLevel);
         // If stream cut late after delivering substantial answer, finish cleanly instead of throwing an error
-        if (hasEmittedChunk && fullText.trim().length >= 80 && isRetryableGeminiError(err, hasTool)) {
+        if (hasEmittedChunk && fullText.trim().length >= 80 && isRetryableGeminiError(err, hasTool, prepared.hasAudioInConversation)) {
           console.warn(
             `[NEXUS AI STREAM] Corte tardio recuperado (${fullText.length} chars) em ${attempt.model}: ${(err?.message || '').slice(0, 100)}`
           );
@@ -1966,7 +2506,7 @@ app.post('/api/chat/stream', async (req, res) => {
           break;
         }
         // If stream failed before or with tiny fragment, reset client buffer and retry cleanly
-        if (isRetryableGeminiError(err, hasTool)) {
+        if (isRetryableGeminiError(err, hasTool, prepared.hasAudioInConversation)) {
           if (hasEmittedChunk) {
             fullText = '';
             sendEvent({ type: 'reset' });
@@ -1976,7 +2516,7 @@ app.post('/api/chat/stream', async (req, res) => {
           );
           if (idx < prepared.attempts.length - 1 && !clientClosed) {
             const isTimeout = String(err?.message || '').includes('TIMEOUT_EXCEEDED');
-            await sleepMs(isTimeout || prepared.isCasualSimple ? 40 : Math.min(200 * Math.pow(1.4, idx), 650));
+            await sleepMs(isTimeout || prepared.isCasualSimple ? 15 : Math.min(90 * Math.pow(1.3, idx), 300));
           }
           continue;
         }
@@ -1991,9 +2531,9 @@ app.post('/api/chat/stream', async (req, res) => {
     // Rescue pass via standard generateContent if all streaming attempts hit transient 503/429/timeout
     if (!succeeded && !clientClosed) {
       const rescueSteps = [
-        { model: 'gemini-3.1-flash-lite', delay: 450, timeout: 11000 },
-        { model: 'gemini-4-hydrogen', delay: 850, timeout: 14000, thinkingLevel: ThinkingLevel.LOW },
-        { model: 'gemini-3.1-flash-lite', delay: 1200, timeout: 14000 },
+        { model: 'gemini-3.1-flash-lite', delay: 100, timeout: 10500 },
+        { model: 'gemini-4-hydrogen', delay: 250, timeout: 13500, thinkingLevel: ThinkingLevel.LOW },
+        { model: 'gemini-3.1-flash-lite', delay: 450, timeout: 13500 },
       ];
       for (const step of rescueSteps) {
         if (clientClosed) break;
@@ -2098,9 +2638,14 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[NEXUS AI] Sistema operacional online na porta ${PORT}`);
+    setTimeout(() => {
+      void warmVoicePreviewsInBackground();
+    }, 2000);
   });
+  httpServer.keepAliveTimeout = 65000;
+  httpServer.headersTimeout = 66000;
 }
 
 startServer().catch((err) => {

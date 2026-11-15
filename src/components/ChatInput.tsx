@@ -328,9 +328,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         reader.onload = () => {
           const dataUrl = reader.result as string;
           const cleanBase64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
-          const mime =
-            file.type ||
-            (isPdf ? 'application/pdf' : isImage ? 'image/jpeg' : 'audio/mpeg');
+          let mime = (file.type || '').split(';')[0].trim().toLowerCase();
+          if (mime === 'audio/x-m4a' || mime === 'audio/m4a') mime = 'audio/mp4';
+          if (mime === 'audio/mp3') mime = 'audio/mpeg';
+          if (mime === 'audio/x-wav') mime = 'audio/wav';
+          if (!mime) {
+            if (isPdf) mime = 'application/pdf';
+            else if (isImage) mime = 'image/jpeg';
+            else if (lowerName.endsWith('.wav')) mime = 'audio/wav';
+            else if (lowerName.endsWith('.ogg')) mime = 'audio/ogg';
+            else if (lowerName.endsWith('.m4a') || lowerName.endsWith('.mp4')) mime = 'audio/mp4';
+            else if (lowerName.endsWith('.webm')) mime = 'audio/webm';
+            else if (lowerName.endsWith('.aac')) mime = 'audio/aac';
+            else mime = 'audio/mpeg';
+          }
           const newAttachment: Attachment = {
             id: 'att-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
             name: file.name,

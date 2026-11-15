@@ -248,7 +248,7 @@ export function exportConversationToPdf(conversation: Conversation): void {
     <div class="brand">NexusBye AI</div>
   </header>
   <main>${messagesHtml}</main>
-  <footer class="doc-footer">NexusBye AI — Criado por Paulo Victor</footer>
+  <footer class="doc-footer">NexusBye AI — Desenvolvido pela NexusBye</footer>
 </body>
 </html>`;
 

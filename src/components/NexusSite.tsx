@@ -12,13 +12,14 @@ import {
   Mail,
   X,
   Loader2,
+  Code2,
 } from 'lucide-react';
 import { CyberGearLogo } from './CyberGearLogo';
 import { PWAInstallButton } from './PWAInstallButton';
 import { PersonaMode, ThemeMode } from '../types/chat';
 import { getPublicNexusUrl } from './Navbar';
 import { copyTextToClipboard } from '../utils/clipboard';
-import nexusbyeEmblemImg from '../assets/images/nexusbye_ai_emblem_1794588026138.jpg';
+import nexusBlueGearImg from '../assets/images/nexus_blue_gear_hero_1794759481640.jpg';
 import researchCoreImg from '../assets/images/nexus_research_core_1794526153590.jpg';
 
 interface NexusSiteProps {
@@ -26,6 +27,7 @@ interface NexusSiteProps {
   onEnterChat: (initialPrompt?: string, persona?: PersonaMode) => void;
   onSaveEmail: (email: string) => void;
   onSignInWithGoogle: () => Promise<void>;
+  isReturningAccount?: boolean;
   isAuthLoading?: boolean;
   authError?: string | null;
   viewportStyle?: React.CSSProperties;
@@ -87,6 +89,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
   onEnterChat,
   onSaveEmail,
   onSignInWithGoogle,
+  isReturningAccount = false,
   isAuthLoading = false,
   authError = null,
   viewportStyle,
@@ -97,6 +100,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
   const [heroImgFailed, setHeroImgFailed] = useState(false);
   const [coreImgFailed, setCoreImgFailed] = useState(false);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
+  const [isDevModalOpen, setIsDevModalOpen] = useState(false);
   const [emailInput, setEmailInput] = useState('');
   const [emailError, setEmailError] = useState<string | null>(null);
 
@@ -104,18 +108,23 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
     PERSONA_PREVIEWS.find((p) => p.id === activePersona) || PERSONA_PREVIEWS[0];
 
   useEffect(() => {
-    if (!isLauncherOpen) return;
+    if (!isLauncherOpen && !isDevModalOpen) return;
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsLauncherOpen(false);
+        setIsDevModalOpen(false);
       }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [isLauncherOpen]);
+  }, [isLauncherOpen, isDevModalOpen]);
 
   const openChatLauncher = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (isReturningAccount) {
+      onEnterChat(undefined, activePersona);
+      return;
+    }
     setEmailError(null);
     setIsLauncherOpen(true);
   };
@@ -229,7 +238,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
                   <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-400">
                     <span>NexusBye AI</span>
                     <span aria-hidden="true">·</span>
-                    <span>Criado por Paulo Victor</span>
+                    <span>Desenvolvido pela NexusBye</span>
                     <span aria-hidden="true">·</span>
                     <span>Acesso online</span>
                   </div>
@@ -245,9 +254,9 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
                   </h1>
 
                   <p className="text-base sm:text-lg text-slate-300 leading-relaxed max-w-xl">
-                    Inteligência artificial rápida e amigável criada por Paulo Victor. Converse em
-                    português natural, pesquise na web em tempo real, envie áudios, leia arquivos do
-                    Google Drive e salve suas memórias entre conversas.
+                    Inteligência artificial rápida e amigável da NexusBye. Converse em
+                    português natural, pesquise na web e redes públicas em tempo real, envie áudios,
+                    leia arquivos do Google Drive e salve suas memórias entre conversas.
                   </p>
 
                   <p className="text-sm font-medium text-sky-400">
@@ -292,8 +301,8 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
                 >
                   {!heroImgFailed ? (
                     <img
-                      src={nexusbyeEmblemImg}
-                      alt="Emblema oficial do NexusBye AI"
+                      src={nexusBlueGearImg}
+                      alt="Engrenagem azul futurista do NexusBye AI"
                       referrerPolicy="no-referrer"
                       onError={() => setHeroImgFailed(true)}
                       className="w-full h-full object-cover transition-transform duration-300 group-hover/hero:scale-[1.02]"
@@ -509,10 +518,10 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
                   Um assistente feito para ser útil, leve de ler e sempre atualizado.
                 </h2>
                 <p className="text-slate-300 text-base leading-relaxed">
-                  Criado por Paulo Victor na NexusBye com foco em clareza e velocidade, o NexusBye
+                  Desenvolvido na NexusBye com foco em clareza e velocidade, o NexusBye
                   AI evita respostas genéricas e burocráticas. Ele organiza informações importantes
-                  com destaques, tabelas e enquetes interativas, e só faz perguntas quando realmente
-                  falta um detalhe do assunto.
+                  com destaques, tabelas e enquetes pontuais apenas quando necessário, respondendo
+                  com agilidade e profundidade sob medida.
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-800/80">
@@ -697,7 +706,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
             <span className="text-slate-600" aria-hidden="true">
               ·
             </span>
-            <span className="text-slate-400 font-normal">Criado por Paulo Victor</span>
+            <span className="text-slate-400 font-normal">Plataforma NexusBye</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-6">
@@ -719,7 +728,80 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Bottom Developers Tab */}
+        <div className="border-t border-slate-800/70 bg-[#04070D]">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDevModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0B1222] hover:bg-[#111C33] border border-slate-700/80 hover:border-sky-400/60 text-xs font-medium text-slate-200 hover:text-white transition-all cursor-pointer"
+            >
+              <Code2 className="w-3.5 h-3.5 text-sky-400" />
+              <span>Saiba mais sobre os desenvolvedores</span>
+            </button>
+          </div>
+        </div>
       </footer>
+
+      {/* Developers Credits Modal */}
+      {isDevModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="nexusbye-devs-title"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setIsDevModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-[#0B111E] border border-slate-700/80 shadow-2xl p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-sky-500/15 border border-sky-400/35 text-sky-400">
+                  <Code2 className="w-4 h-4" />
+                </div>
+                <h2 id="nexusbye-devs-title" className="text-base font-bold text-white">
+                  Desenvolvedores principais:
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDevModalOpen(false)}
+                aria-label="Fechar"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div className="p-3.5 rounded-xl bg-[#070A12] border border-slate-800/90 space-y-1">
+                <p className="text-xs font-mono text-sky-400">Programador(a)/Criador(a):</p>
+                <p className="font-semibold text-white">Paulo Victor Lima de Brito</p>
+              </div>
+              <div className="p-3.5 rounded-xl bg-[#070A12] border border-slate-800/90 space-y-1">
+                <p className="text-xs font-mono text-sky-400">Testador(a)/Corretor(a) de bugs e erros:</p>
+                <p className="font-semibold text-white">Rebeca Lopes</p>
+              </div>
+            </div>
+
+            <div className="pt-1 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsDevModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-sky-400 hover:bg-sky-300 text-slate-950 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chat Launcher Modal (revealed when visitor clicks on the site) */}
       {isLauncherOpen && (
@@ -738,7 +820,7 @@ export const NexusSite: React.FC<NexusSiteProps> = ({
             <div className="relative h-36 bg-[#070A12] overflow-hidden border-b border-slate-800">
               {!heroImgFailed ? (
                 <img
-                  src={nexusbyeEmblemImg}
+                  src={nexusBlueGearImg}
                   alt="NexusBye AI"
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-cover opacity-85"

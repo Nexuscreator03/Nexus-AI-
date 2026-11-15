@@ -19,15 +19,23 @@ import {
   Pencil,
   Scissors,
 } from 'lucide-react';
-import { Message, ThemeMode, Attachment } from '../types/chat';
+import { Message, ThemeMode, Attachment, AiVoiceId, Reminder } from '../types/chat';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { GroundingSources } from './GroundingSources';
 import { CyberGearLogo } from './CyberGearLogo';
 import { cyberAudio } from '../utils/audio';
 import { getThemeColors } from '../utils/themeStyles';
 import { copyTextToClipboard } from '../utils/clipboard';
-
-let activeStopSpeechFn: (() => void) | null = null;
+import {
+  base64ToPlayableUrl,
+  getCachedClientTts,
+  getVoiceMeta,
+  registerGlobalTtsStop,
+  revokePlayableUrl,
+  setCachedClientTts,
+  speakWithDistinctBrowserVoice,
+  stopGlobalTts,
+} from '../utils/browserTts';
 
 interface ChatMessageProps {
   message: Message;
@@ -36,9 +44,12 @@ interface ChatMessageProps {
   onEditMessage?: (messageId: string, newContent: string) => void;
   onFeedback?: (messageId: string, feedback: 'like' | 'dislike' | null) => void;
   onPollVote?: (question: string, option: string) => void;
+  onAddReminder?: (input: { title: string; dueAt?: number | null; notes?: string }) => void;
+  reminders?: Reminder[];
   isBusy?: boolean;
   isStreaming?: boolean;
   textSize?: 'small' | 'medium' | 'large';
+  voiceName?: AiVoiceId;
   theme?: ThemeMode;
 }
 
@@ -61,127 +72,19 @@ function cleanSpeechClientFallback(text: string): string {
     .trim();
 }
 
-function splitIntoSpeechChunks(text: string, maxLen = 175): string[] {
-  const sentences = text
-    .split(/(?<=[.!?…:;])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  const chunks: string[] = [];
-  let current = '';
-
-  for (const sentence of sentences) {
-    if (sentence.length > maxLen) {
-      if (current) {
-        chunks.push(current);
-        current = '';
-      }
-      const words = sentence.split(/\s+/);
-      let part = '';
-      for (const word of words) {
-        if ((part + ' ' + word).trim().length > maxLen) {
-          if (part) chunks.push(part);
-          part = word;
-        } else {
-          part = (part + ' ' + word).trim();
-        }
-      }
-      if (part) chunks.push(part);
-      continue;
-    }
-
-    if ((current + ' ' + sentence).trim().length <= maxLen) {
-      current = (current + ' ' + sentence).trim();
-    } else {
-      if (current) chunks.push(current);
-      current = sentence;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks.length > 0 ? chunks : [text];
-}
-
-function pickBestPortugueseVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  if (!voices || voices.length === 0) return null;
-
-  const preferredKeywords = [
-    'francisca',
-    'antonio',
-    'thalita',
-    'google português do brasil',
-    'google portugues do brasil',
-    'luciana',
-    'felipe',
-    'maria',
-    'daniel',
-    'natural',
-    'neural',
-  ];
-
-  const ptBrVoices = voices.filter(
-    (v) => v.lang.toLowerCase() === 'pt-br' || v.lang.toLowerCase().startsWith('pt_br')
-  );
-  const ptAnyVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('pt'));
-
-  const pool = ptBrVoices.length > 0 ? ptBrVoices : ptAnyVoices;
-  if (pool.length === 0) return null;
-
-  let bestVoice = pool[0];
-  let bestScore = -1;
-
-  for (const v of pool) {
-    const nameLower = v.name.toLowerCase();
-    let score = v.lang.toLowerCase().includes('br') ? 10 : 0;
-    for (let i = 0; i < preferredKeywords.length; i++) {
-      if (nameLower.includes(preferredKeywords[i])) {
-        score += 50 - i * 2;
-      }
-    }
-    if (!v.localService) score += 5; // Online neural voices usually sound much better
-    if (score > bestScore) {
-      bestScore = score;
-      bestVoice = v;
-    }
-  }
-
-  return bestVoice;
-}
-
-function getAvailableVoices(): Promise<SpeechSynthesisVoice[]> {
-  return new Promise((resolve) => {
-    const voices = window.speechSynthesis.getVoices();
-    if (voices.length > 0) {
-      resolve(voices);
-      return;
-    }
-    let resolved = false;
-    const handleVoices = () => {
-      if (resolved) return;
-      resolved = true;
-      window.speechSynthesis.removeEventListener('voiceschanged', handleVoices);
-      resolve(window.speechSynthesis.getVoices());
-    };
-    window.speechSynthesis.addEventListener('voiceschanged', handleVoices);
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        window.speechSynthesis.removeEventListener('voiceschanged', handleVoices);
-        resolve(window.speechSynthesis.getVoices());
-      }
-    }, 400);
-  });
-}
-
-export const ChatMessage: React.FC<ChatMessageProps> = ({
+const ChatMessageComponent: React.FC<ChatMessageProps> = ({
   message,
   onRetry,
   onRegenerate,
   onEditMessage,
   onFeedback,
   onPollVote,
+  onAddReminder,
+  reminders = [],
   isBusy = false,
   isStreaming = false,
   textSize = 'medium',
+  voiceName = 'Kore',
   theme = 'cyber',
 }) => {
   const isUser = message.role === 'user';
@@ -196,7 +99,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const colors = getThemeColors(theme);
 
   const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const speechCancelledRef = useRef(false);
+  const audioBlobUrlRef = useRef<string | null>(null);
+  const speechAbortRef = useRef<AbortController | null>(null);
+  const speechRequestIdRef = useRef(0);
   const contentBoxRef = useRef<HTMLDivElement>(null);
 
   const checkLocalSelection = () => {
@@ -229,20 +134,29 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   }, []);
 
   const stopAllSpeech = () => {
-    speechCancelledRef.current = true;
-    if (activeStopSpeechFn === stopAllSpeech) {
-      activeStopSpeechFn = null;
+    speechRequestIdRef.current += 1;
+    if (speechAbortRef.current) {
+      speechAbortRef.current.abort();
+      speechAbortRef.current = null;
     }
     if (audioElRef.current) {
+      audioElRef.current.onended = null;
+      audioElRef.current.onerror = null;
       audioElRef.current.pause();
       audioElRef.current = null;
     }
+    revokePlayableUrl(audioBlobUrlRef.current);
+    audioBlobUrlRef.current = null;
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
     setIsSpeaking(false);
     setIsLoadingVoice(false);
   };
+
+  useEffect(() => {
+    stopAllSpeech();
+  }, [voiceName]);
 
   useEffect(() => {
     return () => {
@@ -269,113 +183,148 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
   };
 
+  const playBase64Audio = async (
+    audioBase64: string,
+    mimeType: string,
+    reqId: number
+  ): Promise<boolean> => {
+    if (speechRequestIdRef.current !== reqId) return false;
+    const { url, isBlob } = base64ToPlayableUrl(audioBase64, mimeType || 'audio/wav');
+    if (isBlob) {
+      audioBlobUrlRef.current = url;
+    }
+    const audio = new Audio(url);
+    audioElRef.current = audio;
+
+    const cleanup = () => {
+      if (audioElRef.current === audio) {
+        audioElRef.current = null;
+      }
+      if (audioBlobUrlRef.current === url) {
+        revokePlayableUrl(url);
+        audioBlobUrlRef.current = null;
+      }
+      if (speechRequestIdRef.current === reqId) {
+        setIsSpeaking(false);
+        setIsLoadingVoice(false);
+      }
+    };
+
+    audio.onended = cleanup;
+    audio.onerror = cleanup;
+
+    try {
+      setIsLoadingVoice(false);
+      setIsSpeaking(true);
+      await audio.play();
+      if (speechRequestIdRef.current !== reqId) {
+        audio.pause();
+        cleanup();
+        return false;
+      }
+      return true;
+    } catch {
+      audio.pause();
+      cleanup();
+      if (speechRequestIdRef.current === reqId) {
+        setIsLoadingVoice(true);
+      }
+      return false;
+    }
+  };
+
   const handleSpeak = async () => {
     if (isSpeaking || isLoadingVoice) {
       cyberAudio.playClick();
       stopAllSpeech();
+      registerGlobalTtsStop(null);
       return;
     }
 
-    if (activeStopSpeechFn && activeStopSpeechFn !== stopAllSpeech) {
-      activeStopSpeechFn();
-    }
+    stopGlobalTts();
     stopAllSpeech();
-    activeStopSpeechFn = stopAllSpeech;
-    speechCancelledRef.current = false;
+    registerGlobalTtsStop(stopAllSpeech);
+    const reqId = ++speechRequestIdRef.current;
+    const controller = new AbortController();
+    speechAbortRef.current = controller;
     setIsLoadingVoice(true);
     cyberAudio.playVoice();
 
     try {
+      const voiceMeta = getVoiceMeta(voiceName);
       let cleanText = cleanSpeechClientFallback(message.content);
+
+      const cachedAudio = getCachedClientTts(voiceMeta.id, message.content);
+      if (cachedAudio) {
+        if (speechRequestIdRef.current !== reqId) return;
+        const played = await playBase64Audio(cachedAudio.audioBase64, cachedAudio.mimeType, reqId);
+        if (played || speechRequestIdRef.current !== reqId) return;
+      }
 
       // 1. Try server-side Neural TTS / cleaner first
       try {
         const ttsRes = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: message.content }),
+          body: JSON.stringify({ text: message.content, voiceName: voiceMeta.id }),
+          signal: controller.signal,
         });
+
+        if (speechRequestIdRef.current !== reqId) return;
 
         if (ttsRes.ok) {
           const ttsData = await ttsRes.json();
-          if (speechCancelledRef.current) return;
+          if (speechRequestIdRef.current !== reqId) return;
 
           if (ttsData.audioBase64) {
             const mime = ttsData.mimeType || 'audio/wav';
-            const audio = new Audio(`data:${mime};base64,${ttsData.audioBase64}`);
-            audioElRef.current = audio;
-            audio.onended = () => {
-              audioElRef.current = null;
-              setIsSpeaking(false);
-            };
-            audio.onerror = () => {
-              audioElRef.current = null;
-              setIsSpeaking(false);
-            };
-            try {
-              setIsLoadingVoice(false);
-              setIsSpeaking(true);
-              await audio.play();
-              return;
-            } catch {
-              audio.pause();
-              audioElRef.current = null;
-              setIsSpeaking(false);
-              setIsLoadingVoice(true);
-            }
+            setCachedClientTts(voiceMeta.id, message.content, {
+              audioBase64: ttsData.audioBase64,
+              mimeType: mime,
+              cleanSpeechText: ttsData.cleanSpeechText || cleanText,
+            });
+            const played = await playBase64Audio(ttsData.audioBase64, mime, reqId);
+            if (played || speechRequestIdRef.current !== reqId) return;
           }
 
           if (ttsData.cleanSpeechText) {
             cleanText = ttsData.cleanSpeechText;
           }
         }
-      } catch {
-        // Fallback smoothly to client speech engine
+      } catch (fetchErr: any) {
+        if (fetchErr?.name === 'AbortError' || speechRequestIdRef.current !== reqId) return;
       }
 
-      if (speechCancelledRef.current) return;
-      if (!('speechSynthesis' in window) || !cleanText) {
+      if (speechRequestIdRef.current !== reqId) return;
+      const started = await speakWithDistinctBrowserVoice({
+        text: cleanText,
+        voiceId: voiceMeta.id,
+        isCancelled: () => speechRequestIdRef.current !== reqId,
+        onStart: () => {
+          if (speechRequestIdRef.current !== reqId) return;
+          setIsLoadingVoice(false);
+          setIsSpeaking(true);
+        },
+        onEnd: () => {
+          if (speechRequestIdRef.current !== reqId) return;
+          setIsSpeaking(false);
+          setIsLoadingVoice(false);
+        },
+        onError: () => {
+          if (speechRequestIdRef.current !== reqId) return;
+          setIsSpeaking(false);
+          setIsLoadingVoice(false);
+        },
+      });
+      if (!started && speechRequestIdRef.current === reqId) {
         setIsLoadingVoice(false);
-        return;
+        setIsSpeaking(false);
       }
-
-      const voices = await getAvailableVoices();
-      if (speechCancelledRef.current) return;
-
-      const bestVoice = pickBestPortugueseVoice(voices);
-      const chunks = splitIntoSpeechChunks(cleanText, 175);
-
-      setIsLoadingVoice(false);
-      setIsSpeaking(true);
-
-      let chunkIdx = 0;
-      const speakNext = () => {
-        if (speechCancelledRef.current || chunkIdx >= chunks.length) {
-          setIsSpeaking(false);
-          return;
-        }
-        const utterance = new SpeechSynthesisUtterance(chunks[chunkIdx]);
-        utterance.lang = 'pt-BR';
-        utterance.rate = 1.04;
-        utterance.pitch = 1.02;
-        if (bestVoice) utterance.voice = bestVoice;
-
-        utterance.onend = () => {
-          chunkIdx++;
-          speakNext();
-        };
-        utterance.onerror = () => {
-          setIsSpeaking(false);
-        };
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      window.speechSynthesis.cancel();
-      speakNext();
     } catch {
-      setIsLoadingVoice(false);
-      setIsSpeaking(false);
+      if (speechRequestIdRef.current === reqId) {
+        setIsLoadingVoice(false);
+        setIsSpeaking(false);
+      }
     }
   };
 
@@ -786,6 +735,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               <MarkdownRenderer
                 content={message.content}
                 onPollVote={onPollVote}
+                onAddReminder={onAddReminder}
+                reminders={reminders}
                 isBusy={isBusy}
                 isStreaming={isStreaming}
                 textSize={textSize}
@@ -951,3 +902,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     </div>
   );
 };
+
+export const ChatMessage = React.memo(
+  ChatMessageComponent,
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.isBusy === next.isBusy &&
+    prev.isStreaming === next.isStreaming &&
+    prev.textSize === next.textSize &&
+    prev.voiceName === next.voiceName &&
+    prev.theme === next.theme &&
+    prev.reminders === next.reminders
+);
