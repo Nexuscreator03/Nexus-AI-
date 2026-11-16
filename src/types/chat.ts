@@ -40,6 +40,7 @@ export interface Project {
 export interface Conversation {
   id: string;
   title: string;
+  isCustomTitle?: boolean;
   messages: Message[];
   createdAt: number;
   updatedAt: number;

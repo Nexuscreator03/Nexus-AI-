@@ -25,6 +25,7 @@ import {
   ResponseCustomization,
 } from './types/chat';
 import { cyberAudio } from './utils/audio';
+import { prefetchVoicePreviews } from './utils/browserTts';
 import {
   safeSetItem,
   safeGetItem,
@@ -131,6 +132,7 @@ function safeParseConversations(raw: string | null): Conversation[] {
           : [],
         createdAt: typeof c.createdAt === 'number' ? c.createdAt : Date.now(),
         updatedAt: typeof c.updatedAt === 'number' ? c.updatedAt : Date.now(),
+        isCustomTitle: Boolean(c.isCustomTitle),
       }));
   } catch (e) {
     console.error('Failed to parse conversations:', e);
@@ -244,6 +246,79 @@ function safeParseCachedLocation(raw: string | null): ClientLocation | null {
   return null;
 }
 
+function fitWordsLocal(text: string, maxChars: number): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  if (clean.length <= maxChars) return clean;
+  const words = clean.split(' ');
+  let out = '';
+  for (const w of words) {
+    const candidate = out ? `${out} ${w}` : w;
+    if (candidate.length <= maxChars) {
+      out = candidate;
+    } else {
+      break;
+    }
+  }
+  return out || clean.slice(0, maxChars).trim();
+}
+
+function buildConciseLocalTopic(raw: string, maxChars = 22): string {
+  let clean = (raw || '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/[`*_#>"'«»]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  clean = clean
+    .replace(
+      /^(?:oi|ol[áa]|e\s*a[íi]|fala|salve|bom\s+dia|boa\s+tarde|boa\s+noite|nexus|por\s+favor|pfv|ei)\b[\s,!:.-]*/i,
+      ''
+    )
+    .replace(
+      /^(?:me\s+(?:diz|fala|explica|conta|ajuda\s+com|ajuda\s+a|mostra|dá|da|passa|resume|resuma)|pode\s+(?:me\s+)?(?:dizer|falar|explicar|buscar|pesquisar|ver|ajudar\s+com)|quero\s+(?:saber|entender|ver|aprender)\s*(?:sobre|como)?|busca(?:r)?\s+(?:sobre|por|na\s+internet)?|pesquisa(?:r)?\s+(?:sobre|por|na\s+internet)?|o\s+que\s+(?:é|eh|são|significa|aconteceu\s+(?:com|em|no|na))|quais\s+(?:são|foram)|qual\s+(?:é|o|a)|como\s+(?:está|esta|tá|ta|fazer|funciona)|quem\s+(?:é|foi)|onde\s+(?:fica|está))\b[\s,?:.-]*/i,
+      ''
+    )
+    .replace(/[?!.,;:]+$/g, '')
+    .trim();
+
+  if (!clean) return '';
+  const capitalized = clean.charAt(0).toUpperCase() + clean.slice(1);
+  return fitWordsLocal(capitalized, maxChars);
+}
+
+function buildConciseLocalTitle(raw: string, attachments?: Attachment[]): string {
+  const clean = (raw || '').replace(/https?:\/\/\S+/gi, ' ').replace(/[`*_#>"'«»]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) {
+    if (attachments?.some((a) => a.type === 'audio')) return 'Análise de mensagem de áudio';
+    if (attachments?.some((a) => a.type === 'image')) return 'Análise de imagem enviada';
+    if (attachments && attachments.length > 0) return 'Análise de arquivo enviado';
+    return 'Nova conversa';
+  }
+  const withoutGreeting = clean
+    .replace(
+      /^(?:(?:oi+|ol[aá]+|eae|e\s+a[ií]|tudo\s+(?:bem|bom)|td\s+bem|como\s+vai|bom\s+dia|boa\s+tarde|boa\s+noite|salve|opa|fala|ei|nexus|por\s+favor|pfv)\b[\s,!:.-]*)+/i,
+      ''
+    )
+    .replace(
+      /^(?:me\s+(?:diz|fala|explica|conta|ajuda\s+(?:com|a)|mostra|d[aá]|passa|resume|resuma)|pode\s+(?:me\s+)?(?:dizer|falar|explicar|buscar|pesquisar|ver|ajudar\s+(?:com|a)))\b[\s,?:.-]*/i,
+      ''
+    )
+    .replace(/[?!.,;:]+$/g, '')
+    .trim();
+
+  const candidate = withoutGreeting.length >= 4 ? withoutGreeting : clean;
+  const capitalized = candidate.charAt(0).toUpperCase() + candidate.slice(1);
+  let fitted = fitWordsLocal(capitalized, 46).replace(/[.…,:;!?-]+$/, '').trim();
+  if (capitalized.length > 46) {
+    const danglingRegex =
+      /\s+(?:a|o|as|os|e|ou|de|da|do|das|dos|em|na|no|nas|nos|para|pra|pro|por|pelo|pela|com|sem|que|como|se|ao|aos|à|às|um|uma|uns|umas|vezes|mais|muito)$/i;
+    while (danglingRegex.test(fitted) && fitted.includes(' ')) {
+      fitted = fitted.replace(danglingRegex, '').trim();
+    }
+  }
+  return fitted || 'Nova conversa';
+}
+
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>(() =>
     safeParseConversations(safeGetItem(STORAGE_KEY))
@@ -278,6 +353,9 @@ export default function App() {
   const [dueBannerReminders, setDueBannerReminders] = useState<Reminder[]>([]);
 
   const [thinkingConvIds, setThinkingConvIds] = useState<Set<string>>(() => new Set());
+  const [thinkingStatuses, setThinkingStatuses] = useState<
+    Record<string, { text: string; progress?: number }>
+  >({});
   const [streamingMsgIds, setStreamingMsgIds] = useState<Set<string>>(() => new Set());
   const isThinking = activeId ? thinkingConvIds.has(activeId) : false;
   const [useSearch, setUseSearch] = useState<boolean>(() => {
@@ -526,6 +604,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let retryTimer: number | null = null;
+    void prefetchVoicePreviews().then((complete) => {
+      if (!complete) {
+        retryTimer = window.setTimeout(() => {
+          void prefetchVoicePreviews();
+        }, 4500);
+      }
+    });
+    return () => {
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
     pendingScrollToBottomRef.current = false;
     const scroller = scrollContainerRef.current;
@@ -630,7 +722,10 @@ export default function App() {
             for (const c of cloudConvs) {
               const existing = byId.get(c.id);
               if (!existing || c.updatedAt >= existing.updatedAt) {
-                byId.set(c.id, c);
+                byId.set(c.id, {
+                  ...c,
+                  ...(existing?.isCustomTitle ? { isCustomTitle: true, title: existing.title } : {}),
+                });
               }
             }
             return Array.from(byId.values()).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -1059,6 +1154,12 @@ export default function App() {
         next.delete(id);
         return next;
       });
+      setThinkingStatuses((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     }
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -1073,7 +1174,7 @@ export default function App() {
     setConversations((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
-        const updated = { ...c, title: newTitle, updatedAt: Date.now() };
+        const updated = { ...c, title: newTitle, isCustomTitle: true, updatedAt: Date.now() };
         syncConvToCloud(updated);
         return updated;
       })
@@ -1230,6 +1331,13 @@ export default function App() {
         toDelete.forEach((c) => next.delete(c.id));
         return next;
       });
+      setThinkingStatuses((prev) => {
+        const next = { ...prev };
+        toDelete.forEach((c) => {
+          delete next[c.id];
+        });
+        return next;
+      });
       setConversations((prev) => prev.filter((c) => !c.isArchived));
       if (activeConversation?.isArchived) {
         setActiveId(null);
@@ -1242,6 +1350,7 @@ export default function App() {
       abortControllersRef.current.forEach((ctrl) => ctrl.abort());
       abortControllersRef.current.clear();
       setThinkingConvIds(new Set());
+      setThinkingStatuses({});
       setConversations([]);
       setActiveId(null);
       if (authUser) {
@@ -1376,8 +1485,7 @@ export default function App() {
 
     if (!targetConvId || !latestConversationsRef.current.some((c) => c.id === targetConvId)) {
       const newId = 'conv-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
-      const titleRaw = finalContent || (hasAttachments ? attachments![0].name : 'Nova Conversa');
-      const newTitle = titleRaw.length > 38 ? titleRaw.slice(0, 38) + '...' : titleRaw;
+      const newTitle = buildConciseLocalTitle(trimmed, attachments);
       const newConv: Conversation = {
         id: newId,
         title: newTitle,
@@ -1496,11 +1604,30 @@ export default function App() {
       }
     };
 
+    const initialTopic = buildConciseLocalTopic(finalContent, 20);
+    const hasAudioAtt = Boolean(attachments?.some((a) => a.type === 'audio' || a.mimeType?.startsWith('audio/')));
+    const hasImageAtt = Boolean(attachments?.some((a) => a.type === 'image'));
+    const initialStatusText = hasAudioAtt
+      ? 'Decodificando sinal de áudio'
+      : hasImageAtt
+      ? 'Escaneando matriz visual'
+      : effectiveSearch
+      ? initialTopic
+        ? `Varrendo rede: ${initialTopic}`
+        : 'Abrindo varredura neural'
+      : effectivePersona === 'code'
+      ? 'Mapeando arquitetura lógica'
+      : 'Ativando núcleo neural';
+
     setThinkingConvIds((prev) => {
       const next = new Set(prev);
       next.add(activeConvKey);
       return next;
     });
+    setThinkingStatuses((prev) => ({
+      ...prev,
+      [activeConvKey]: { text: initialStatusText, progress: 22 },
+    }));
     cyberAudio.playNeuralPulse();
 
     abortControllersRef.current.get(activeConvKey)?.abort();
@@ -1645,7 +1772,15 @@ export default function App() {
                 if (!rawJson) continue;
                 try {
                   const parsed = JSON.parse(rawJson);
-                  if (parsed.type === 'reset') {
+                  if (parsed.type === 'status' && typeof parsed.text === 'string' && parsed.text.trim()) {
+                    setThinkingStatuses((prev) => ({
+                      ...prev,
+                      [activeConvKey]: {
+                        text: parsed.text.trim(),
+                        progress: typeof parsed.progress === 'number' ? parsed.progress : prev[activeConvKey]?.progress,
+                      },
+                    }));
+                  } else if (parsed.type === 'reset') {
                     streamAccumulated = '';
                     targetBuffer = '';
                     revealedLength = 0;
@@ -1753,6 +1888,9 @@ export default function App() {
         }
       }
 
+      let shouldSummarizeTitle = false;
+      let msgsForTitleSummary: Array<{ role: string; content: string }> = [];
+
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== activeConvKey) return c;
@@ -1760,6 +1898,10 @@ export default function App() {
           const nextMessages = exists
             ? c.messages.map((m) => (m.id === streamingMsgId ? modelMsg : m))
             : [...c.messages, modelMsg];
+          if (!c.isCustomTitle && nextMessages.length <= 6) {
+            shouldSummarizeTitle = true;
+            msgsForTitleSummary = nextMessages.map((m) => ({ role: m.role, content: m.content }));
+          }
           const updated = {
             ...c,
             messages: nextMessages,
@@ -1769,6 +1911,31 @@ export default function App() {
           return updated;
         })
       );
+
+      if (shouldSummarizeTitle && msgsForTitleSummary.length > 0) {
+        void (async () => {
+          try {
+            const titleRes = await fetch('/api/chat/title', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ messages: msgsForTitleSummary }),
+            });
+            if (!titleRes.ok) return;
+            const titleData = await titleRes.json();
+            const smartTitle = typeof titleData?.title === 'string' ? titleData.title.trim() : '';
+            if (!smartTitle || smartTitle.length < 2) return;
+            setConversations((prev) =>
+              prev.map((c) => {
+                if (c.id !== activeConvKey || c.isCustomTitle) return c;
+                if (c.title === smartTitle) return c;
+                const updated = { ...c, title: smartTitle };
+                syncConvToCloud(updated);
+                return updated;
+              })
+            );
+          } catch {}
+        })();
+      }
     } catch (err: any) {
       stopRevealLoop();
       markStreamingActive(false);
@@ -1825,6 +1992,12 @@ export default function App() {
           next.delete(activeConvKey);
           return next;
         });
+        setThinkingStatuses((prev) => {
+          if (!(activeConvKey in prev)) return prev;
+          const next = { ...prev };
+          delete next[activeConvKey];
+          return next;
+        });
       }
     }
   };
@@ -1840,6 +2013,12 @@ export default function App() {
       if (!prev.has(activeId)) return prev;
       const next = new Set(prev);
       next.delete(activeId);
+      return next;
+    });
+    setThinkingStatuses((prev) => {
+      if (!(activeId in prev)) return prev;
+      const next = { ...prev };
+      delete next[activeId];
       return next;
     });
   };
@@ -2180,7 +2359,13 @@ export default function App() {
                 ))}
 
                 {isThinking && !isActivelyStreamingText && (
-                  <ThinkingIndicator useSearch={useSearch} theme={theme} />
+                  <ThinkingIndicator
+                    useSearch={useSearch}
+                    persona={persona}
+                    theme={theme}
+                    statusText={activeId ? thinkingStatuses[activeId]?.text : undefined}
+                    progressPct={activeId ? thinkingStatuses[activeId]?.progress : undefined}
+                  />
                 )}
 
                 <div ref={messagesEndRef} className="h-4" />

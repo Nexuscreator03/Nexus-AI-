@@ -597,7 +597,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     ) : (
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span className="block text-xs font-medium truncate">{conv.title}</span>
+                          <span className="block text-[11px] sm:text-xs font-medium leading-tight break-words">
+                            {conv.title}
+                          </span>
                           {conv.isFavorite && (
                             <Star className="w-3 h-3 fill-amber-400 text-amber-400 shrink-0" />
                           )}

@@ -30,11 +30,14 @@ import {
   base64ToPlayableUrl,
   getCachedClientTts,
   getVoiceMeta,
+  playAudioBase64ViaContext,
   registerGlobalTtsStop,
   revokePlayableUrl,
   setCachedClientTts,
   speakWithDistinctBrowserVoice,
+  stopActiveWebAudio,
   stopGlobalTts,
+  unlockAudioContextSync,
 } from '../utils/browserTts';
 
 interface ChatMessageProps {
@@ -139,6 +142,7 @@ const ChatMessageComponent: React.FC<ChatMessageProps> = ({
       speechAbortRef.current.abort();
       speechAbortRef.current = null;
     }
+    stopActiveWebAudio();
     if (audioElRef.current) {
       audioElRef.current.onended = null;
       audioElRef.current.onerror = null;
@@ -189,6 +193,30 @@ const ChatMessageComponent: React.FC<ChatMessageProps> = ({
     reqId: number
   ): Promise<boolean> => {
     if (speechRequestIdRef.current !== reqId) return false;
+
+    const playedViaCtx = await playAudioBase64ViaContext(audioBase64, {
+      mimeType,
+      isCancelled: () => speechRequestIdRef.current !== reqId,
+      onEnded: () => {
+        if (speechRequestIdRef.current === reqId) {
+          setIsSpeaking(false);
+          setIsLoadingVoice(false);
+        }
+      },
+      onError: () => {
+        if (speechRequestIdRef.current === reqId) {
+          setIsSpeaking(false);
+          setIsLoadingVoice(false);
+        }
+      },
+    });
+    if (playedViaCtx) {
+      setIsLoadingVoice(false);
+      setIsSpeaking(true);
+      return true;
+    }
+    if (speechRequestIdRef.current !== reqId) return false;
+
     const { url, isBlob } = base64ToPlayableUrl(audioBase64, mimeType || 'audio/wav');
     if (isBlob) {
       audioBlobUrlRef.current = url;
@@ -243,6 +271,7 @@ const ChatMessageComponent: React.FC<ChatMessageProps> = ({
 
     stopGlobalTts();
     stopAllSpeech();
+    unlockAudioContextSync();
     registerGlobalTtsStop(stopAllSpeech);
     const reqId = ++speechRequestIdRef.current;
     const controller = new AbortController();

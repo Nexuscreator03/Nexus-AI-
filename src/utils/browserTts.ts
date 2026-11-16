@@ -1,6 +1,189 @@
 import { AiVoiceId, AiVoiceOption, AI_VOICE_OPTIONS } from '../types/chat';
 
 let globalStopHandler: (() => void) | null = null;
+let sharedAudioCtx: AudioContext | null = null;
+let activeBufferSource: AudioBufferSourceNode | null = null;
+let sharedAudioEl: HTMLAudioElement | null = null;
+let sharedAudioBlobUrl: string | null = null;
+
+// 1-sample silent WAV to synchronously unlock HTMLAudioElement inside user tap/click
+const SILENT_WAV_DATA_URI =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+function getOrCreateAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  if (!sharedAudioCtx) {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      sharedAudioCtx = new AudioCtx();
+    }
+  }
+  return sharedAudioCtx;
+}
+
+function getOrCreateSharedAudioEl(): HTMLAudioElement | null {
+  if (typeof window === 'undefined' || typeof Audio === 'undefined') return null;
+  if (!sharedAudioEl) {
+    sharedAudioEl = new Audio();
+    sharedAudioEl.preload = 'auto';
+    sharedAudioEl.setAttribute('playsinline', 'true');
+  }
+  return sharedAudioEl;
+}
+
+export function unlockAudioContextSync() {
+  try {
+    const ctx = getOrCreateAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        void ctx.resume().catch(() => {});
+      }
+      const silent = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = silent;
+      src.connect(ctx.destination);
+      src.start(0);
+    }
+  } catch {}
+
+  // Also synchronously unlock a reusable HTMLAudioElement on user gesture for mobile/iframe fallback
+  try {
+    const el = getOrCreateSharedAudioEl();
+    if (el && el.paused) {
+      el.muted = true;
+      el.src = SILENT_WAV_DATA_URI;
+      const p = el.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          if (el.src === SILENT_WAV_DATA_URI) {
+            el.pause();
+            el.currentTime = 0;
+          }
+          el.muted = false;
+        }).catch(() => {
+          el.muted = false;
+        });
+      } else {
+        el.muted = false;
+      }
+    }
+  } catch {}
+}
+
+export function stopActiveWebAudio() {
+  if (activeBufferSource) {
+    try {
+      activeBufferSource.onended = null;
+      activeBufferSource.stop(0);
+      activeBufferSource.disconnect();
+    } catch {}
+    activeBufferSource = null;
+  }
+  if (sharedAudioEl) {
+    try {
+      sharedAudioEl.onended = null;
+      sharedAudioEl.onerror = null;
+      sharedAudioEl.pause();
+      sharedAudioEl.removeAttribute('src');
+    } catch {}
+  }
+  if (sharedAudioBlobUrl) {
+    revokePlayableUrl(sharedAudioBlobUrl);
+    sharedAudioBlobUrl = null;
+  }
+}
+
+export async function playAudioBase64ViaContext(
+  audioBase64: string,
+  options: {
+    mimeType?: string;
+    isCancelled: () => boolean;
+    onEnded: () => void;
+    onError: () => void;
+  }
+): Promise<boolean> {
+  // 1. Try Web Audio API (fastest, zero autoplay drift once context is running)
+  try {
+    const ctx = getOrCreateAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        await Promise.race([
+          ctx.resume().catch(() => {}),
+          new Promise<void>((r) => setTimeout(r, 450)),
+        ]);
+      }
+      if (options.isCancelled()) return false;
+
+      if (ctx.state === 'running') {
+        const cleanB64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
+        const binary = atob(cleanB64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+
+        const decoded = await ctx.decodeAudioData(bytes.buffer.slice(0));
+        if (options.isCancelled()) return false;
+
+        stopActiveWebAudio();
+        const source = ctx.createBufferSource();
+        source.buffer = decoded;
+        source.connect(ctx.destination);
+        activeBufferSource = source;
+
+        source.onended = () => {
+          if (activeBufferSource === source) {
+            activeBufferSource = null;
+          }
+          if (!options.isCancelled()) {
+            options.onEnded();
+          }
+        };
+
+        source.start(0);
+        return true;
+      }
+    }
+  } catch {}
+
+  // 2. Fallback to synchronously primed shared HTMLAudioElement
+  try {
+    if (options.isCancelled()) return false;
+    const el = getOrCreateSharedAudioEl();
+    if (!el) return false;
+
+    stopActiveWebAudio();
+    const { url, isBlob } = base64ToPlayableUrl(audioBase64, options.mimeType || 'audio/wav');
+    if (isBlob) sharedAudioBlobUrl = url;
+
+    el.muted = false;
+    el.volume = 1;
+    el.src = url;
+    el.onended = () => {
+      if (sharedAudioBlobUrl === url) {
+        revokePlayableUrl(url);
+        sharedAudioBlobUrl = null;
+      }
+      if (!options.isCancelled()) options.onEnded();
+    };
+    el.onerror = () => {
+      if (sharedAudioBlobUrl === url) {
+        revokePlayableUrl(url);
+        sharedAudioBlobUrl = null;
+      }
+      if (!options.isCancelled()) options.onError();
+    };
+
+    await el.play();
+    if (options.isCancelled()) {
+      stopActiveWebAudio();
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function registerGlobalTtsStop(fn: (() => void) | null) {
   globalStopHandler = fn;
@@ -12,6 +195,7 @@ export function stopGlobalTts() {
     globalStopHandler = null;
     fn();
   }
+  stopActiveWebAudio();
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -199,10 +383,16 @@ export function pickDistinctPortugueseVoice(
   // Pick a second distinct voice for Aura / Orion when multiple voices are available
   const prefersSecondVoice = voiceId === 'Zephyr' || voiceId === 'Fenrir';
   if (prefersSecondVoice && scored.length > 1) {
-    const second = scored[1];
-    if (second.score >= scored[0].score - 35) {
+    const second = scored.find((s) => s.voice.name !== scored[0].voice.name);
+    if (second && second.score >= scored[0].score - 45) {
       return second.voice;
     }
+  }
+
+  // If browser only has one single non-local Google female voice and user wants male (Atlas/Orion), check if another pt voice exists
+  if (isMaleVoice && scored[0] && !scored[0].voice.localService && scored[0].voice.name.toLowerCase().includes('google') && scored.length > 1) {
+    const alt = scored.find((s) => s.voice.localService || !s.voice.name.toLowerCase().includes('google'));
+    if (alt) return alt.voice;
   }
 
   return scored[0]?.voice || pool[0];
@@ -213,11 +403,11 @@ export function getDistinctBrowserSpeechParams(voiceId: AiVoiceId): { pitch: num
     case 'Kore':
       return { pitch: 1.06, rate: 1.02 };
     case 'Zephyr':
-      return { pitch: 1.28, rate: 1.08 };
+      return { pitch: 1.32, rate: 1.08 };
     case 'Charon':
-      return { pitch: 0.62, rate: 0.94 };
+      return { pitch: 0.58, rate: 0.93 };
     case 'Fenrir':
-      return { pitch: 0.80, rate: 1.07 };
+      return { pitch: 0.78, rate: 1.06 };
     default:
       return { pitch: 1.05, rate: 1.02 };
   }
@@ -268,10 +458,16 @@ export async function speakWithDistinctBrowserVoice(opts: {
       opts.onError();
     };
 
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
     window.speechSynthesis.speak(utterance);
   };
 
   window.speechSynthesis.cancel();
+  if (window.speechSynthesis.paused) {
+    window.speechSynthesis.resume();
+  }
   speakNext();
   return true;
 }

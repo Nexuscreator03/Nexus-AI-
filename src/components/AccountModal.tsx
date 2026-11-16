@@ -31,12 +31,15 @@ import {
   base64ToPlayableUrl,
   getCachedClientTts,
   getVoicePreviewSampleText,
+  playAudioBase64ViaContext,
   prefetchVoicePreviews,
   registerGlobalTtsStop,
   revokePlayableUrl,
   setCachedClientTts,
   speakWithDistinctBrowserVoice,
+  stopActiveWebAudio,
   stopGlobalTts,
+  unlockAudioContextSync,
 } from '../utils/browserTts';
 
 interface AccountModalProps {
@@ -88,6 +91,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
       previewAbortRef.current.abort();
       previewAbortRef.current = null;
     }
+    stopActiveWebAudio();
     if (previewAudioRef.current) {
       previewAudioRef.current.onended = null;
       previewAudioRef.current.onerror = null;
@@ -140,6 +144,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
     stopGlobalTts();
     stopPreviewVoice();
+    unlockAudioContextSync();
 
     const reqId = ++previewRequestIdRef.current;
     const controller = new AbortController();
@@ -151,6 +156,19 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
     const playWav = async (audioBase64: string, mimeType: string): Promise<boolean> => {
       if (previewRequestIdRef.current !== reqId) return false;
+
+      const playedViaCtx = await playAudioBase64ViaContext(audioBase64, {
+        mimeType,
+        isCancelled: () => previewRequestIdRef.current !== reqId,
+        onEnded: () => {
+          if (previewRequestIdRef.current === reqId) setPreviewingVoice(null);
+        },
+        onError: () => {
+          if (previewRequestIdRef.current === reqId) setPreviewingVoice(null);
+        },
+      });
+      if (playedViaCtx || previewRequestIdRef.current !== reqId) return playedViaCtx;
+
       const { url, isBlob } = base64ToPlayableUrl(audioBase64, mimeType || 'audio/wav');
       if (isBlob) {
         previewBlobUrlRef.current = url;

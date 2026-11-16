@@ -1,56 +1,89 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Cpu, Globe, Zap, Sparkles } from 'lucide-react';
-import { ThemeMode } from '../types/chat';
+import { PersonaMode, ThemeMode } from '../types/chat';
 
 interface ThinkingIndicatorProps {
   useSearch: boolean;
+  persona?: PersonaMode;
   theme?: ThemeMode;
+  statusText?: string;
+  progressPct?: number;
 }
 
-const THINKING_STEPS_SEARCH = [
-  'Ativando malha de pesquisa multi-fontes em tempo real...',
-  'Consultando Google Search, Wikipédia e portais verificados...',
-  'Buscando artigos científicos, repositórios técnicos e referências...',
-  'Verificando dados temporais, meteorológicos e geográficos...',
-  'Cruzando memória global de conversas anteriores...',
-  'Filtrando fontes confiáveis e removendo ruídos...',
-  'Avaliando contexto aprofundado para resposta completa...',
-  'Estruturando tabelas, destaques e tópicos de fácil leitura...',
-  'Aplicando seu perfil de preferências e bom humor...',
-  'Preparando enquete ou pergunta interativa para continuar o papo...',
-  'Validando links de referência e precisão dos fatos...',
-  'Finalizando síntese neural no NEXUS Core...',
-];
+export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
+  useSearch,
+  persona = 'standard',
+  theme = 'cyber',
+  statusText,
+  progressPct,
+}) => {
+  const [subStepIndex, setSubStepIndex] = useState(0);
 
-const THINKING_STEPS_STANDARD = [
-  'Processando tensores neurais no NEXUS Core...',
-  'Consultando memória global de conversas anteriores...',
-  'Relembrando detalhes e preferências aprendidas sobre você...',
-  'Sincronizando data, fuso horário e contexto local...',
-  'Analisando intenções, nuances e tom ideal da resposta...',
-  'Construindo raciocínio lógico passo a passo...',
-  'Refinando explicação com exemplos claros e criativos...',
-  'Adicionando toques de humor amigável e leve...',
-  'Formatando palavras em destaque para leitura rápida...',
-  'Preparando uma pergunta curiosa para você responder...',
-  'Revisando clareza e precisão técnica do conteúdo...',
-  'Transmitindo resposta final em alta velocidade...',
-];
+  const serverText = statusText?.trim() || '';
+  const isSpecificQueryStatus = /^(Varrendo rede:|Rastreando:|Buscando:|Pesquisando:|Sondando clima:|Vendo clima:|Decodificando|Triangulando)/i.test(
+    serverText
+  );
 
-export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ useSearch, theme = 'cyber' }) => {
-  const steps = useSearch ? THINKING_STEPS_SEARCH : THINKING_STEPS_STANDARD;
-  const [currentStepIdx, setCurrentStepIdx] = useState(0);
+  const stageSequence = useMemo(() => {
+    if (useSearch || isSpecificQueryStatus) {
+      const first = serverText || 'Abrindo varredura neural';
+      return Array.from(
+        new Set([
+          first,
+          'Cruzando dados em tempo real',
+          'Validando fontes da rede',
+          'Sintetizando resposta neural',
+        ])
+      );
+    }
+    if (persona === 'code') {
+      const first = serverText || 'Mapeando arquitetura lógica';
+      return Array.from(
+        new Set([
+          first,
+          'Analisando padrões técnicos',
+          'Estruturando solução neural',
+          'Calibrando resposta técnica',
+        ])
+      );
+    }
+    if (persona === 'concise') {
+      const first = serverText || 'Filtrando dados essenciais';
+      return Array.from(
+        new Set([
+          first,
+          'Comprimindo núcleo de resposta',
+          'Calibrando síntese direta',
+        ])
+      );
+    }
+    const first = serverText || 'Ativando núcleo neural';
+    return Array.from(
+      new Set([
+        first,
+        'Sincronizando memória e contexto',
+        'Estruturando sinapses lógicas',
+        'Calibrando transmissão neural',
+      ])
+    );
+  }, [serverText, useSearch, isSpecificQueryStatus, persona]);
 
   useEffect(() => {
-    setCurrentStepIdx(0);
-  }, [useSearch]);
+    setSubStepIndex(0);
+    if (stageSequence.length <= 1) return;
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentStepIdx((prev) => (prev + 1) % steps.length);
-    }, 1250);
-    return () => clearInterval(interval);
-  }, [steps.length]);
+    const delayMs = isSpecificQueryStatus ? 2100 : 1200;
+    const timer = window.setInterval(() => {
+      setSubStepIndex((prev) => (prev + 1) % stageSequence.length);
+    }, delayMs);
+
+    return () => window.clearInterval(timer);
+  }, [stageSequence, isSpecificQueryStatus]);
+
+  const displayStatus = stageSequence[subStepIndex] || stageSequence[0] || 'Ativando núcleo neural';
+  const baseProgress = progressPct ?? (useSearch ? 42 : 48);
+  const dynamicBoost = Math.min(28, subStepIndex * 9);
+  const safeProgress = Math.max(20, Math.min(94, baseProgress + dynamicBoost));
 
   const avatarClass =
     theme === 'simple'
@@ -102,10 +135,10 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ useSearch,
         <span className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ${dotClass}`} />
       </div>
 
-      <div className={`flex-1 min-w-0 max-w-2xl rounded-2xl p-4 relative overflow-hidden border ${containerClass}`}>
+      <div className={`flex-1 min-w-0 max-w-2xl rounded-2xl px-4 py-3.5 relative overflow-hidden border ${containerClass}`}>
         <div className="absolute inset-x-0 top-0 h-[1.5px] bg-gradient-to-r from-transparent via-current to-transparent opacity-60 animate-pulse" />
 
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold tracking-wider uppercase border ${badgeClass}`}>
               <Sparkles className="w-3 h-3 animate-spin" style={{ animationDuration: '4s' }} />
@@ -125,7 +158,7 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ useSearch,
           </div>
         </div>
 
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0 min-h-[28px]">
           <div className="flex items-center gap-1 h-5 shrink-0">
             {[0, 1, 2, 3, 4].map((i) => (
               <div
@@ -140,15 +173,15 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ useSearch,
             ))}
           </div>
 
-          <div className="flex-1 min-w-0 font-mono text-xs opacity-95 tracking-wide transition-all duration-300 truncate">
-            {steps[currentStepIdx]}
+          <div className="flex-1 min-w-0 font-mono text-[11px] sm:text-xs leading-[1.25] opacity-95 tracking-wide whitespace-normal break-words">
+            {displayStatus}
           </div>
         </div>
 
-        <div className="mt-3 w-full bg-black/40 h-1 rounded-full overflow-hidden border border-white/10">
+        <div className="mt-2.5 w-full bg-black/40 h-1 rounded-full overflow-hidden border border-white/10">
           <div
             className={`h-full transition-all duration-500 rounded-full ${progressClass}`}
-            style={{ width: `${((currentStepIdx + 1) / steps.length) * 100}%` }}
+            style={{ width: `${safeProgress}%` }}
           />
         </div>
       </div>

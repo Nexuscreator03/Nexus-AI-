@@ -485,19 +485,112 @@ ${dailyLines.join('\n')}`,
 }
 
 // Clean conversational filler words so search engines & social APIs get high-signal topic keywords
+const UWB_START = '(?<![\\p{L}\\p{N}_])';
+const UWB_END = '(?![\\p{L}\\p{N}_])';
+
+const SEARCH_FILLER_RE = new RegExp(
+  `${UWB_START}(por favor|pfv|pesquise|busque|procure|me diga|me fale|me explique|explique|a fundo|em detalhes|pesquisa avan[çc]ada|com fontes|cient[ií]ficas?|o que est[aã]o falando|est[aã]o falando|o que est[aá] rolando|o que est[aá] em alta|quais s[aã]o as novidades|quais as [uú]ltimas novidades|quais\\s+(?:s[aã]o|foram)|qual\\s+(?:foi|[eé])|quem\\s+(?:foi|[eé]|ganhou|venceu)|como\\s+(?:est[aá]|t[aá]|foi|funciona)|onde\\s+(?:fica|est[aá])|quais|qual|novidades|[uú]ltim[oa]s?|resultado|not[ií]cias?|o que (?:[eé]|foi)|tudo sobre|nas redes sociais|em redes sociais|redes sociais|rede social|no youtube|no instagram|no tiktok|no reddit|no twitter|no x|e no google|no google|do google|pelo google|youtube|instagram|tiktok|reddit|twitter|facebook|google|hoje|agora|atualmente|ultimamente|no momento|mais recentes?|sobre|para mim|pra mim)${UWB_END}`,
+  'giu'
+);
+
+const STOPWORD_RE = new RegExp(
+  `${UWB_START}(e|em|na|no|nas|nos|da|do|das|dos|de|as|os|a|o|um|uma)${UWB_END}`,
+  'giu'
+);
+
+const GREETING_WORDS_RE = new RegExp(
+  `${UWB_START}(oi+|ol[aá]+|eae|e\\s*a[ií]|tudo\\s+(?:bem|bom|[oó]timo|certo|suave|tranquilo)|td\\s+(?:bem|bom)|como\\s+vai|como\\s+voc[eê]\\s+est[aá]|bom\\s+dia|boa\\s+tarde|boa\\s+noite|salve|opa|fala|ei|nexus|ai|ok|blz|beleza|valeu|obrigad[oa]|como\\s+posso\\s+ajudar|em\\s+que\\s+posso\\s+ajudar)${UWB_END}`,
+  'giu'
+);
+
 function extractSearchTerms(query: string): string {
   const cleaned = query
-    .replace(
-      /\b(por favor|pfv|pesquise|busque|procure|me diga|me fale|me explique|explique|a fundo|em detalhes|pesquisa avan[çc]ada|com fontes|cient[ií]ficas?|o que est[aã]o falando|est[aã]o falando|o que est[aá] rolando|o que est[aá] em alta|quais s[aã]o as novidades|quais as [uú]ltimas novidades|quais s[aã]o|quais|novidades|[uú]ltimas|not[ií]cias?|o que [eé]|quem [eé]|como funciona|tudo sobre|nas redes sociais|em redes sociais|redes sociais|rede social|no youtube|no instagram|no tiktok|no reddit|no twitter|no x|e no google|no google|do google|pelo google|youtube|instagram|tiktok|reddit|twitter|facebook|google|hoje|agora|atualmente|ultimamente|no momento|mais recentes?|sobre|para mim|pra mim)\b/gi,
-      ' '
-    )
+    .replace(SEARCH_FILLER_RE, ' ')
     .replace(/[?!.,;:()[\]]+/g, ' ')
-    .replace(/\b(e|em|na|no|nas|nos|da|do|das|dos|de|as|os|a|o|um|uma)\b/gi, ' ')
+    .replace(STOPWORD_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 100);
 
   return cleaned || query.replace(/[?!.,;:()[\]]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+function fitWordsToLimit(text: string, maxChars: number): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  if (clean.length <= maxChars) return clean;
+  const words = clean.split(' ');
+  let out = '';
+  for (const w of words) {
+    const candidate = out ? `${out} ${w}` : w;
+    if (candidate.length > maxChars) break;
+    out = candidate;
+  }
+  return out || words[0].slice(0, maxChars);
+}
+
+function isGreetingOnlyMessage(text: string): boolean {
+  const stripped = String(text || '')
+    .replace(GREETING_WORDS_RE, ' ')
+    .replace(/[\s!?.,:;~"'()-]+/g, '')
+    .trim();
+  return stripped.length < 3;
+}
+
+function buildConciseTopic(query: string, maxChars = 25): string {
+  const noUrls = query.replace(/https?:\/\/\S+/gi, ' ').trim();
+  const terms = extractSearchTerms(noUrls)
+    .replace(
+      /^(?:(?:oi+|ol[aá]+|eae|e\s+a[ií]|tudo\s+(?:bem|bom)|td\s+bem|como\s+vai|bom\s+dia|boa\s+tarde|boa\s+noite|salve|opa|nexus)(?![\p{L}\p{N}_])[\s,!:.-]*)+/iu,
+      ''
+    )
+    .trim();
+  return fitWordsToLimit(terms || noUrls, maxChars);
+}
+
+function fitTitleCleanly(text: string, maxChars = 46): string {
+  const clean = text.replace(/\s+/g, ' ').replace(/[.…,:;!?-]+$/, '').trim();
+  if (!clean) return '';
+  if (clean.length <= maxChars) return clean;
+  let cut = fitWordsToLimit(clean, maxChars);
+  const danglingRegex =
+    /\s+(?:a|o|as|os|e|ou|de|da|do|das|dos|em|na|no|nas|nos|para|pra|pro|por|pelo|pela|com|sem|que|como|se|ao|aos|à|às|um|uma|uns|umas|vezes|mais|muito)$/i;
+  while (danglingRegex.test(cut) && cut.includes(' ')) {
+    cut = cut.replace(danglingRegex, '').trim();
+  }
+  return cut.replace(/[.…,:;!?-]+$/, '').trim();
+}
+
+function buildConciseFallbackTitle(messages: Array<{ role?: string; content?: string }>): string {
+  const meaningful = messages
+    .map((m) => String(m?.content || '').replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const nonGreetingUser = [...messages]
+    .filter((m) => m?.role === 'user')
+    .map((m) => String(m?.content || '').replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').trim())
+    .find((t) => t.length > 3 && !isGreetingOnlyMessage(t));
+  const nonGreetingAny = meaningful.find((t) => t.length > 3 && !isGreetingOnlyMessage(t));
+  let base = (nonGreetingUser || nonGreetingAny || meaningful[0] || 'Nova conversa')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/[`*_#>"'«»]/g, ' ')
+    .replace(
+      /^(?:(?:oi+|ol[aá]+|eae|e\s+a[ií]|tudo\s+(?:bem|bom)|td\s+bem|como\s+vai|bom\s+dia|boa\s+tarde|boa\s+noite|salve|opa|nexus|por\s+favor|pfv|ei)(?![\p{L}\p{N}_])[\s,!:.-]*)+/iu,
+      ''
+    )
+    .replace(
+      /^(?:me\s+(?:diz|fala|explica|conta|ajuda\s+(?:com|a)|mostra|d[aá]|passa|resume|resuma)|pode\s+(?:me\s+)?(?:dizer|falar|explicar|buscar|pesquisar|ver|ajudar\s+(?:com|a)))(?![\p{L}\p{N}_])[\s,?:.-]*/iu,
+      ''
+    )
+    .replace(/\s+/g, ' ')
+    .replace(/[?!.,;:]+$/g, '')
+    .trim();
+
+  if (!base || base.length < 3) {
+    const topic = buildConciseTopic(nonGreetingUser || meaningful[0] || '', 44);
+    base = topic || 'Nova conversa';
+  }
+  const capitalized = base.charAt(0).toUpperCase() + base.slice(1);
+  return fitTitleCleanly(capitalized, 46) || 'Nova conversa';
 }
 
 type ResearchDepth = 'fast' | 'standard_search' | 'deep';
@@ -616,7 +709,7 @@ function classifyQueryDepth(query: string, useSearch: boolean): ResearchDepth {
       trimmed
     );
   const liveTemporalNewsFinanceSports =
-    /\b(not[ií]cias?|manchetes?|[uú]ltimas\s+novidades|ultimas\s+noticias|acontecimentos?|em\s+tempo\s+real|atualmente|ultimamente|recentemente|hoje\s+em\s+dia|nesta\s+semana|nesse\s+m[eê]s|previs[aã]o\s+do\s+tempo|como\s+est[aá]\s+o\s+tempo|clima|temperatura|vai\s+chover|umidade|coordenadas|onde\s+fica|dist[aâ]ncia\s+entre|rota\s+para|minha\s+localiza[çc][aã]o|onde\s+estou|perto\s+de\s+mim|cota[çc][aã]o|d[oó]lar|euro|bitcoin|cripto|bolsa\s+de\s+valores|a[çc][õo]es|ibovespa|placar|campe[ãa]o|campeonato|elei[çc][õo]es|quem\s+ganhou|quem\s+venceu|lan[çc]amento|2025|2026|2027)\b|\b(?:not[ií]cias?|acontecendo|aconteceu|novidades|pre[çc]o|valor|tempo|rolando)\s+(?:no\s+mundo|no\s+brasil|de\s+hoje|hoje|agora|ontem|atualmente|recentes?)\b/i.test(
+    /\b(not[ií]cias?|manchetes?|[uú]ltimas\s+novidades|ultimas\s+noticias|acontecimentos?|em\s+tempo\s+real|atualmente|ultimamente|recentemente|hoje\s+em\s+dia|nesta\s+semana|nesse\s+m[eê]s|ontem|previs[aã]o\s+do\s+tempo|como\s+est[aá]\s+o\s+tempo|clima|temperatura|vai\s+chover|umidade|coordenadas|onde\s+fica|dist[aâ]ncia\s+entre|rota\s+para|minha\s+localiza[çc][aã]o|onde\s+estou|perto\s+de\s+mim|cota[çc][aã]o|d[oó]lar|euro|bitcoin|cripto|bolsa\s+de\s+valores|a[çc][õo]es|ibovespa|placar|resultado|jogo|jogos|partida|gols?|rodada|campe[ãa]o|campeonato|elei[çc][õo]es|quem\s+ganhou|quem\s+venceu|lan[çc]amento|2025|2026|2027)\b|\b(?:not[ií]cias?|acontecendo|aconteceu|novidades|pre[çc]o|valor|tempo|rolando)\s+(?:no\s+mundo|no\s+brasil|de\s+hoje|hoje|agora|ontem|atualmente|recentes?)\b|\b[uú]ltim[oa]\s+(?:jogo|partida|rodada|not[ií]cia|atualiza[çc][aã]o|vers[aã]o|epis[oó]dio|lan[çc]amento)\b/i.test(
       trimmed
     );
   const socialPlatforms =
@@ -630,7 +723,7 @@ function classifyQueryDepth(query: string, useSearch: boolean): ResearchDepth {
     explicitWebSearchIntent ||
     liveTemporalNewsFinanceSports ||
     socialPlatforms ||
-    (useSearch && /\b(quem\s+[eé]|o\s+que\s+(?:aconteceu|[eé])|novidades|atualiza[çc][aã]o|vers[aã]o\s+atual|lan[çc]ou|mundo|brasil|tecnologia)\b/i.test(trimmed));
+    (useSearch && /\b(quem\s+(?:[eé]|foi|ganhou|venceu)|o\s+que\s+(?:aconteceu|[eé])|qual\s+(?:foi|o|a)|quais\s+(?:os|as|s[aã]o)|novidades|atualiza[çc][aã]o|vers[aã]o\s+atual|lan[çc]ou|mundo|brasil|tecnologia|filme|s[eé]rie|pre[çc]o|valor)\b/i.test(trimmed));
 
   if (needsLiveLookup) {
     // Deep research ONLY when the user asks a complex, multi-part analytical query
@@ -1179,11 +1272,24 @@ function cleanTextForNaturalSpeech(text: string): string {
 
 const ALLOWED_TTS_VOICES = new Set(['Kore', 'Zephyr', 'Charon', 'Fenrir']);
 
-const VOICE_STYLE_HINTS: Record<string, string> = {
-  Kore: 'Soft, warm, natural young Brazilian Portuguese female voice',
-  Zephyr: 'Bright, clear, lively and expressive Brazilian Portuguese female voice',
-  Charon: 'Deep, calm, resonant and serene Brazilian Portuguese male voice',
-  Fenrir: 'Firm, confident, energetic Brazilian Portuguese male voice',
+// Map the 4 UI voice IDs (kept stable for Firestore/user prefs) to 4 acoustically distinct Gemini voices
+const GEMINI_VOICE_PROFILE: Record<string, { prebuiltVoice: string; style: string }> = {
+  Kore: {
+    prebuiltVoice: 'Kore',
+    style: 'Soft, gentle, warm young Brazilian Portuguese female voice',
+  },
+  Zephyr: {
+    prebuiltVoice: 'Leda',
+    style: 'Bright, lively, higher-pitched youthful Brazilian Portuguese female voice',
+  },
+  Charon: {
+    prebuiltVoice: 'Charon',
+    style: 'Very deep, calm, resonant bass baritone Brazilian Portuguese male voice',
+  },
+  Fenrir: {
+    prebuiltVoice: 'Iapetus',
+    style: 'Clear, firm, confident medium adult Brazilian Portuguese male voice',
+  },
 };
 
 const VOICE_PREVIEW_SAMPLES: Record<string, string> = {
@@ -1193,7 +1299,7 @@ const VOICE_PREVIEW_SAMPLES: Record<string, string> = {
   Fenrir: 'Olá! Eu sou Orion, a voz masculina do Nexus AI.',
 };
 
-const TTS_PREVIEWS_DISK_PATH = '/tmp/nexus-tts-previews-v1.json';
+const TTS_PREVIEWS_DISK_PATH = '/tmp/nexus-tts-previews-v3.json';
 
 interface TtsCacheEntry {
   expiresAt: number;
@@ -1295,6 +1401,14 @@ function savePreviewCacheToDisk() {
 
 loadPreviewCacheFromDisk();
 
+let ttsQueueTail: Promise<unknown> = Promise.resolve();
+
+function enqueueTtsCall<T>(fn: () => Promise<T>): Promise<T> {
+  const run = ttsQueueTail.then(fn, fn);
+  ttsQueueTail = run.catch(() => {});
+  return run;
+}
+
 async function synthesizeGeminiTts(
   voiceName: string,
   ttsInputText: string,
@@ -1311,77 +1425,96 @@ async function synthesizeGeminiTts(
     return pending;
   }
 
-  const job = (async () => {
+  const job = enqueueTtsCall(async () => {
+    const cachedInsideQueue = ttsAudioCache.get(cacheKey);
+    if (cachedInsideQueue && cachedInsideQueue.expiresAt > Date.now()) {
+      return { audioBase64: cachedInsideQueue.audioBase64, mimeType: cachedInsideQueue.mimeType };
+    }
+
     const aiBeta = getGeminiBetaClient();
-    const styleHint = VOICE_STYLE_HINTS[voiceName] || VOICE_STYLE_HINTS.Kore;
+    const profile = GEMINI_VOICE_PROFILE[voiceName] || GEMINI_VOICE_PROFILE.Kore;
     const allSteps = [
-      { model: 'gemini-3.8-flash-tts', timeout: 8500, useStyle: true },
-      { model: 'gemini-2.5-flash-preview-tts', timeout: 8500, useStyle: false },
-      { model: 'gemini-3.8-flash-lite-tts', timeout: 7000, useStyle: true },
-      { model: 'gemini-2.5-pro-preview-tts', timeout: 8500, useStyle: false },
+      { model: 'gemini-3.8-flash-tts', timeout: 11000, useStyle: true },
+      { model: 'gemini-3.8-flash-lite-tts', timeout: 11000, useStyle: true },
+      { model: 'gemini-2.5-flash-preview-tts', timeout: 12000, useStyle: false },
     ];
+
+    const tryStep = async (step: (typeof allSteps)[number]) => {
+      const part = step.useStyle
+        ? { text: ttsInputText, speechMetadata: { style: profile.style } }
+        : { text: `Leia em voz alta em português do Brasil exatamente este texto:\n\n${ttsInputText}` };
+
+      const response: any = await runWithAbortTimeout(
+        (signal) =>
+          aiBeta.models.generateContent({
+            model: step.model,
+            contents: [{ role: 'user', parts: [part] }],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: profile.prebuiltVoice },
+                },
+              },
+              abortSignal: signal,
+            },
+          }),
+        step.timeout
+      );
+
+      const rawAudioBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      const rawMimeType = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType || 'audio/wav';
+      if (!rawAudioBase64) return null;
+
+      const normalized = ensureWavBase64(rawAudioBase64, rawMimeType);
+      const isPreview = VOICE_PREVIEW_SAMPLES[voiceName] === ttsInputText;
+      if (ttsAudioCache.size >= 80) {
+        const oldestKey = ttsAudioCache.keys().next().value;
+        if (oldestKey && !oldestKey.endsWith(VOICE_PREVIEW_SAMPLES[oldestKey.split(':')[0]] || '__none__')) {
+          ttsAudioCache.delete(oldestKey);
+        }
+      }
+      ttsAudioCache.set(cacheKey, {
+        expiresAt: Date.now() + (isPreview ? 24 * 60 * 60_000 : 30 * 60_000),
+        audioBase64: normalized.audioBase64,
+        mimeType: normalized.mimeType,
+        cleanSpeechText,
+      });
+      if (isPreview) {
+        savePreviewCacheToDisk();
+      }
+      return normalized;
+    };
 
     const now = Date.now();
     const activeSteps = allSteps.filter((s) => (ttsModelCooldownUntil.get(s.model) || 0) <= now);
-    const stepsToTry = activeSteps.length > 0 ? activeSteps : allSteps;
+    const stepsToTry = activeSteps.length > 0 ? activeSteps : allSteps.slice(0, 2);
 
+    let hitRateLimit = false;
     for (const step of stepsToTry) {
       try {
-        const part = step.useStyle
-          ? { text: ttsInputText, speechMetadata: { style: styleHint } }
-          : { text: ttsInputText };
-
-        const response: any = await runWithAbortTimeout(
-          (signal) =>
-            aiBeta.models.generateContent({
-              model: step.model,
-              contents: [{ role: 'user', parts: [part] }],
-              config: {
-                responseModalities: ['AUDIO'],
-                speechConfig: {
-                  voiceConfig: {
-                    prebuiltVoiceConfig: { voiceName },
-                  },
-                },
-                abortSignal: signal,
-              },
-            }),
-          step.timeout
-        );
-
-        const rawAudioBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        const rawMimeType = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType || 'audio/wav';
-
-        if (rawAudioBase64) {
-          const normalized = ensureWavBase64(rawAudioBase64, rawMimeType);
-          const isPreview = VOICE_PREVIEW_SAMPLES[voiceName] === ttsInputText;
-          if (ttsAudioCache.size >= 80) {
-            const oldestKey = ttsAudioCache.keys().next().value;
-            if (oldestKey && !oldestKey.endsWith(VOICE_PREVIEW_SAMPLES[oldestKey.split(':')[0]] || '__none__')) {
-              ttsAudioCache.delete(oldestKey);
-            }
-          }
-          ttsAudioCache.set(cacheKey, {
-            expiresAt: Date.now() + (isPreview ? 24 * 60 * 60_000 : 30 * 60_000),
-            audioBase64: normalized.audioBase64,
-            mimeType: normalized.mimeType,
-            cleanSpeechText,
-          });
-          if (isPreview) {
-            savePreviewCacheToDisk();
-          }
-          return normalized;
-        }
+        const result = await tryStep(step);
+        if (result) return result;
       } catch (ttsErr: any) {
         const msg = String(ttsErr?.message || '');
         if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-          ttsModelCooldownUntil.set(step.model, Date.now() + 45_000);
+          hitRateLimit = true;
+          ttsModelCooldownUntil.set(step.model, Date.now() + 18_000);
         }
-        console.warn(`[NEXUS TTS] ${step.model} (${voiceName}) falhou: ${msg.slice(0, 140)}`);
+        console.warn(`[NEXUS TTS] ${step.model} (${voiceName}->${profile.prebuiltVoice}) falhou: ${msg.slice(0, 140)}`);
       }
     }
+
+    // One fast RPM recovery retry on 3.8-flash-tts if burst rate-limit hit
+    if (hitRateLimit) {
+      await sleepMs(2000);
+      try {
+        const result = await tryStep(allSteps[0]);
+        if (result) return result;
+      } catch {}
+    }
     return null;
-  })();
+  });
 
   inFlightTtsMap.set(cacheKey, job);
   try {
@@ -1400,7 +1533,7 @@ async function warmVoicePreviewsInBackground() {
       const hit = ttsAudioCache.get(`${voiceName}:${sampleText}`);
       if (hit && hit.expiresAt > Date.now()) continue;
       await synthesizeGeminiTts(voiceName, sampleText, sampleText).catch(() => null);
-      await sleepMs(1300);
+      await sleepMs(3200);
     }
   } finally {
     previewWarmupRunning = false;
@@ -1444,7 +1577,7 @@ app.post('/api/tts', async (req, res) => {
       return res.status(400).json({ error: 'Nada para narrar.' });
     }
 
-    const ttsInputText = cleanSpeechText.slice(0, 2000);
+    const ttsInputText = cleanSpeechText.slice(0, 1400);
     const synthesized = await synthesizeGeminiTts(voiceName, ttsInputText, cleanSpeechText);
 
     if (synthesized) {
@@ -1553,7 +1686,10 @@ async function transcribeAudioAttachment(
 }
 
 // Helper: Build system instruction, live contexts, Gemini contents, and model cascade for both /api/chat and /api/chat/stream
-async function prepareGeminiChatRequest(body: any) {
+async function prepareGeminiChatRequest(
+  body: any,
+  onStatus?: (status: string, progress?: number) => void
+) {
   const {
     messages,
     useSearch = false,
@@ -1591,6 +1727,7 @@ async function prepareGeminiChatRequest(body: any) {
   }
 
   if (audioTranscriptionsToRun.length > 0) {
+    onStatus?.('Decodificando sinal de áudio', 25);
     await Promise.all(
       audioTranscriptionsToRun.map(async ({ att, base64Data, mimeType }) => {
         const transcript = await transcribeAudioAttachment(base64Data, mimeType);
@@ -1638,6 +1775,8 @@ async function prepareGeminiChatRequest(body: any) {
     ? classifyQueryDepth(lastText, Boolean(useSearch))
     : 'fast';
 
+  const conciseTopic = lastText ? buildConciseTopic(lastText, 25) : '';
+
   const withSoftTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
     Promise.race([promise, sleepMs(ms).then(() => fallback)]);
 
@@ -1647,6 +1786,20 @@ async function prepareGeminiChatRequest(body: any) {
   const hasGeoIntent = Boolean(
     lastText && /\b(coordenadas|latitude|longitude|onde fica|localiza[çc][aã]o|posi[çc][aã]o|mapa|dist[aâ]ncia|altitude|eleva[çc][aã]o|fuso|perto de mim|onde estou|aqui|minha cidade|meu local)\b/i.test(lastText)
   );
+
+  if (researchDepth !== 'fast' && !isCasualSimple) {
+    if (hasWeatherIntent) {
+      onStatus?.(conciseTopic ? `Sondando clima: ${conciseTopic}` : 'Sintonizando radar climático', 40);
+    } else if (hasGeoIntent) {
+      onStatus?.('Triangulando coordenadas', 40);
+    } else {
+      onStatus?.(conciseTopic ? `Varrendo rede: ${conciseTopic}` : 'Conectando satélites de busca', 40);
+    }
+  } else if (hasGlobalMemory) {
+    onStatus?.('Sincronizando memória neural', 42);
+  } else {
+    onStatus?.('Processando contexto neural', 45);
+  }
 
   const [weatherResult, geoResult, multiSearchResult] =
     researchDepth === 'fast' || isCasualSimple
@@ -2115,6 +2268,7 @@ ${richFormattingAndPersonality}${slangGuidanceRule}${reminderCapabilityRule}${cu
     attempts,
     aggregatedSources,
     lastText,
+    conciseTopic,
     researchDepth,
     isCasualSimple,
     hasAudioInConversation,
@@ -2419,7 +2573,9 @@ app.post('/api/chat/stream', async (req, res) => {
   };
 
   try {
-    const prepared = await prepareGeminiChatRequest(req.body);
+    const prepared = await prepareGeminiChatRequest(req.body, (statusText, progress) => {
+      sendEvent({ type: 'status', text: statusText, progress });
+    });
     if (clientClosed) return res.end();
 
     const startTime = Date.now();
@@ -2430,6 +2586,7 @@ app.post('/api/chat/stream', async (req, res) => {
     const webSearchQueriesSet = new Set<string>();
     let succeeded = false;
     let lastError: any = null;
+    let lastEmittedSearchQuery = '';
 
     for (let idx = 0; idx < prepared.attempts.length; idx++) {
       const attempt = prepared.attempts[idx];
@@ -2437,6 +2594,24 @@ app.post('/api/chat/stream', async (req, res) => {
       let hasEmittedChunk = false;
       const attemptController = new AbortController();
       activeAbortController = attemptController;
+
+      if (idx > 0) {
+        sendEvent({ type: 'status', text: 'Recalibrando núcleo neural', progress: 58 });
+      } else if (attempt.search) {
+        sendEvent({
+          type: 'status',
+          text: prepared.conciseTopic
+            ? `Rastreando: ${prepared.conciseTopic}`
+            : 'Conectando satélites de busca',
+          progress: 65,
+        });
+      } else {
+        sendEvent({
+          type: 'status',
+          text: prepared.isCasualSimple ? 'Ativando síntese instantânea' : 'Sincronizando sinapses neurais',
+          progress: 70,
+        });
+      }
 
       try {
         const attemptConfig = buildAttemptConfig(
@@ -2459,6 +2634,7 @@ app.post('/api/chat/stream', async (req, res) => {
         usedModel = attempt.model;
         searchUsed = attempt.search || prepared.aggregatedSources.length > 0;
 
+        let emittedSourcesStatus = false;
         const iterator = stream[Symbol.asyncIterator]();
         while (true) {
           if (clientClosed) break;
@@ -2479,10 +2655,23 @@ app.post('/api/chat/stream', async (req, res) => {
           const gm = chunk?.candidates?.[0]?.groundingMetadata;
           if (gm?.groundingChunks && Array.isArray(gm.groundingChunks)) {
             groundingChunksAll.push(...gm.groundingChunks);
+            if (!hasEmittedChunk && !emittedSourcesStatus && gm.groundingChunks.length > 0) {
+              emittedSourcesStatus = true;
+              sendEvent({ type: 'status', text: 'Cruzando fontes da rede', progress: 82 });
+            }
           }
           if (gm?.webSearchQueries && Array.isArray(gm.webSearchQueries)) {
             for (const q of gm.webSearchQueries) {
-              if (typeof q === 'string' && q.trim()) webSearchQueriesSet.add(q);
+              if (typeof q === 'string' && q.trim()) {
+                webSearchQueriesSet.add(q);
+                if (!hasEmittedChunk && q.trim() !== lastEmittedSearchQuery) {
+                  lastEmittedSearchQuery = q.trim();
+                  const shortQ = fitWordsToLimit(lastEmittedSearchQuery, 25);
+                  if (shortQ) {
+                    sendEvent({ type: 'status', text: `Rastreando: ${shortQ}`, progress: 74 });
+                  }
+                }
+              }
             }
           }
         }
@@ -2614,6 +2803,74 @@ app.post('/api/chat/stream', async (req, res) => {
       rawError: error?.message || 'Erro desconhecido ao processar requisição',
     });
     return res.end();
+  }
+});
+
+// Concise Conversation Title Summarizer Endpoint (<= 24 chars, summarizes main topic)
+app.post('/api/chat/title', async (req, res) => {
+  const { messages } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.json({ title: 'Nova conversa' });
+  }
+
+  const cleanedMsgs = messages
+    .slice(0, 8)
+    .map((m: any) => ({
+      role: m?.role === 'model' || m?.role === 'assistant' ? 'NEXUS' : 'Usuário',
+      content: String(m?.content || '').replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 320),
+    }))
+    .filter((m) => m.content.length > 0);
+
+  const nonGreetingMsgs = cleanedMsgs.filter((m) => !isGreetingOnlyMessage(m.content));
+  const msgsForPrompt = (nonGreetingMsgs.length > 0 ? nonGreetingMsgs : cleanedMsgs).slice(0, 6);
+
+  const fallback = buildConciseFallbackTitle(messages);
+
+  let ai: GoogleGenAI;
+  try {
+    ai = getGeminiClient();
+  } catch {
+    return res.json({ title: fallback });
+  }
+
+  try {
+    const transcript = msgsForPrompt.map((m) => `${m.role}: ${m.content}`).join('\n');
+    const resp = await runWithAbortTimeout(
+      (signal) =>
+        ai.models.generateContent({
+          model: 'gemini-3.1-flash-lite',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `Crie um título-resumo EXPLICATIVO desta conversa para a barra lateral, de modo que qualquer pessoa entenda exatamente o que foi falado.\nREGRAS:\n- Português do Brasil natural, claro e completo (4 a 7 palavras).\n- OBRIGATÓRIO ter no máximo 42 caracteres no total (incluindo espaços) e ser uma frase COMPLETA que não pareça cortada no meio.\n- IGNORE saudações (oi, olá, tudo bem) e foque no TEMA E OBJETIVO PRINCIPAL.\n- Exemplos bons: "Como investir no Tesouro Direto" (31), "Por que o Wi-Fi cai e como funciona" (35), "Montagem de PC gamer custo-benefício" (36).\n- NÃO use aspas, pontos finais, dois-pontos nem reticências (...).\n- Responda SOMENTE o título.\n\nConversa:\n${transcript}`,
+                },
+              ],
+            },
+          ],
+          config: {
+            thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+            maxOutputTokens: 48,
+            abortSignal: signal,
+          },
+        }),
+      4000
+    );
+
+    const rawTitle = String(resp?.text || '')
+      .split(/\r?\n/)[0]
+      .replace(/^["'`*#-]+|["'`*#.…:!?-]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const cleanTitle = fitTitleCleanly(rawTitle, 46);
+    if (cleanTitle.length >= 4 && !(nonGreetingMsgs.length > 0 && isGreetingOnlyMessage(cleanTitle))) {
+      return res.json({ title: cleanTitle });
+    }
+    return res.json({ title: fallback });
+  } catch {
+    return res.json({ title: fallback });
   }
 });
 
